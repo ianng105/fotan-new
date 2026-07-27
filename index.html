@@ -309,11 +309,12 @@ function render(){
       h+='<div class="note">請完成付款後上傳憑證</div>';
       h+='</div>';
 
-      if(D.paymeLink||D.wcLink||D.aliLink){
+      if(D.paymeLink||D.wcLink||D.aliLink||true){
         h+='<div class="pay-links">';
         if(D.paymeLink)h+='<a href="'+E(D.paymeLink)+'" target="_blank" style="background:#e31b5f">PayMe</a>';
 if(D.aliLink)h+='<a href="javascript:void(0)" onclick="showAlipayQR('+fee+')" style="background:#1677ff">Alipay</a>';
         if(D.fpsPhone)h+='<a href="javascript:void(0)" onclick="showFPSQR(\''+E(D.fpsPhone)+'\','+fee+')" style="background:#6366f1">FPS</a>';
+        h+='<a href="javascript:void(0)" onclick="showCashWait()" style="background:#059669">Cash</a>';
         h+='</div>';
       }
 
@@ -463,6 +464,31 @@ function showFPSQR(phone,fee){
   ov.innerHTML='<div class="dbox" style="max-width:320px"><div class="dn">🏦 FPS 轉數快</div><div class="dm">HK$'+fee+' · 收款電話 '+phone+'</div><img src="'+(D.fpsQrImg||'/api/image?name=qr-fps')+'" style="width:200px;height:200px;margin:0 auto 12px;display:block;border-radius:12px;object-fit:contain" onerror="this.src=\'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data='+encodeURIComponent('https://fotan.techforliving.net/api/fps-redirect?phone='+phone+'&am='+fee)+'\'"><p style="font-size:11px;color:#94a3b8">長按QR Code儲存到手機</p><button class="btn-yes" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer" onclick="this.parentElement.parentElement.remove()">關閉</button></div>';
   ov.addEventListener('click',function(e){if(e.target===ov)ov.remove()});
   document.body.appendChild(ov);
+}
+function showCashWait(){
+  var attId=last.attId, mid=meeting.id;
+  A('/attendance',{method:'PUT',body:JSON.stringify({id:attId,payment:'cash_pending'})}).then(function(){
+    document.getElementById('main').innerHTML='<div class="result"><div style="font-size:48px;margin-bottom:16px">⏳</div><div class="rname" id="cash-wait-title">Waiting for Approve</div><div class="rtime" id="cash-wait-sub">請等待工作人員確認</div><button onclick="location.reload()" class="btn btn-primary" style="margin-top:20px">返回</button></div>';
+    var pollCount=0;
+    var timer=setInterval(function(){
+      pollCount++;
+      A('/attendance?meeting_id='+mid).then(function(attendance){
+        var record=attendance.find(function(a){return a.id===attId;});
+        if(record&&record.payment==='paid'){
+          clearInterval(timer);
+          last.payment='paid';
+          last.time=record.arrival_time||'';
+          render();
+        }else if(pollCount>=60){
+          clearInterval(timer);
+          var title=document.getElementById('cash-wait-title');
+          var sub=document.getElementById('cash-wait-sub');
+          if(title)title.textContent='等候逾時';
+          if(sub)sub.textContent='請按返回重新載入';
+        }
+      });
+    },2000);
+  });
 }
 function directCheckin(attId){
   var now=new Date(),time=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');

@@ -860,10 +860,10 @@ async function toggleOverviewMeeting(mid) {
     att.map(a => {
       const p = getName(a.person_type, a.person_id);
       const name = p?p.name:'?';
-      const paid = a.payment && a.payment!=='unpaid' && a.payment!=='';
+      var pmt = a.payment || '';
       const absent = a.arrival_time === 'absent';
       var safeName = esc(name).replace(/'/g,"\\'");
-      return '<div class="ov-person-card" style="cursor:pointer" onclick="event.stopPropagation();showOverviewPayOps(\''+a.person_type+'\','+a.person_id+','+a.id+',\''+safeName+'\','+paid+')">'+
+      return '<div class="ov-person-card" style="cursor:pointer" onclick="event.stopPropagation();showOverviewPayOps(\''+a.person_type+'\','+a.person_id+','+a.id+',\''+safeName+'\',\''+pmt+'\')">'+
         '<div class="pc-av '+a.person_type+'" style="width:32px;height:32px;font-size:13px">'+esc(name.charAt(0))+'</div>'+
         '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">'+esc(name)+'</div>'+
         '<div style="font-size:11px;color:var(--text2)">'+(absent?'缺席':esc(a.arrival_time||'—'))+'</div></div>'+
@@ -931,10 +931,12 @@ async function exportDetailCSV() {
   toast('詳細 CSV 已下載');
 }
 
-async function showOverviewPayOps(type, pid, attId, name, paid) {
+async function showOverviewPayOps(type, pid, attId, name, payment) {
   var typeLabel = type==='member'?'會員':type==='guest'?'來賓':'';
-  var isFree = paid === 'free';
-  var payStatus = paid ? (isFree ? '🆓 免費' : '✅ 已付款') : '❌ 未付款';
+  var isFree = payment === 'free';
+  var isPending = payment === 'cash_pending';
+  var paid = payment && payment !== 'unpaid' && payment !== '' && payment !== 'cash_pending';
+  var payStatus = isFree ? '🆓 免費' : (isPending ? '⏳ 待確認' : (paid ? '✅ 已付款' : '❌ 未付款'));
 
   // Load attendance record for this person
   var thisAtt = null;
@@ -988,7 +990,7 @@ async function showOverviewPayOps(type, pid, attId, name, paid) {
   paySection += '<button class="btn btn-sm '+(tier==='walk_in'?'btn-primary':'btn-outline')+'" style="flex:1;font-size:10px" onclick="setPriceTier('+attId+',\'walk_in\')">🚶 臨場</button>';
   paySection += '</div>';
 
-  if (!paid) {
+  if (!paid || isPending) {
     paySection += '<div style="text-align:center;font-size:24px;font-weight:800;margin-bottom:12px">HK$'+displayFee+' <span style="font-size:12px;color:var(--text2);font-weight:400">'+priceLabel+'</span></div>';
     // 1. 憑證付費
     paySection += '<div style="background:#f0fdf4;border:1.5px solid #10b981;border-radius:10px;padding:12px;margin-bottom:8px"><div style="font-weight:700;font-size:13px;color:#10b981;margin-bottom:8px">📤 憑證付費</div>';
@@ -1202,7 +1204,8 @@ async function toggleMeetingRow(mid) {
 var pname = getName(ptype, a.person_id);
       var absent = a.arrival_time === 'absent';
       var unpaid = !a.payment || a.payment === 'unpaid' || a.payment === '';
-      var payCls = absent ? 'absent' : (a.payment==='free'?'free':(a.payment==='paid'?'paid':'unpaid'));
+      var isCashPending = a.payment === 'cash_pending' && !absent;
+      var payCls = absent ? 'absent' : (a.payment==='cash_pending'?'pending':(a.payment==='free'?'free':(a.payment==='paid'?'paid':'unpaid')));
       var onclick = '';
       var actions = '';
       if (unpaid && !absent) {
@@ -1213,6 +1216,12 @@ var pname = getName(ptype, a.person_id);
         actions = '<span style="display:inline-flex;gap:2px;flex-shrink:0" onclick="event.stopPropagation()">'+
           '<button onclick="quickMarkPaid('+a.id+')" style="background:#10b981;color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer;line-height:1.5" title="標記已付款">✅ 已付</button>'+
           '<button onclick="copyPayLink('+a.id+')" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer;line-height:1.5" title="複製付款連結">🔗</button>'+
+          '</span>';
+      }
+      if (isCashPending) {
+        onclick = ' onclick="event.stopPropagation()"';
+        actions = '<span style="display:inline-flex;gap:2px;flex-shrink:0" onclick="event.stopPropagation()">'+
+          '<button onclick="quickMarkPaid('+a.id+')" style="background:#d97706;color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer;line-height:1.5" title="確認現金已收">⏳ 待確認</button>'+
           '</span>';
       }
       return '<div class="att-mini att-'+payCls+'"'+onclick+'>'+
@@ -1230,7 +1239,7 @@ var pname = getName(ptype, a.person_id);
   var memberAtt = att.filter(function(a){return a.person_type==='member';});
   var guestAtt = att.filter(function(a){return a.person_type==='guest';});
 
-  var filterHtml = '<div style="margin-bottom:8px;display:flex;gap:8px;align-items:center"><select onchange="filterAttendees('+mid+',this.value)" style="padding:4px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:11px;background:#fff"><option value="all">📋 全部</option><option value="paid">✅ 已繳費</option><option value="free">🆓 免費</option><option value="unpaid">❌ 未繳費</option><option value="absent">✕ 缺席</option></select><span style="font-size:10px;color:var(--text2)" id="att-count-'+mid+'">👥 共 '+att.length+' 人 · 👤會員 '+memberAtt.length+' · 👥來賓 '+guestAtt.length+'</span></div>';
+  var filterHtml = '<div style="margin-bottom:8px;display:flex;gap:8px;align-items:center"><select onchange="filterAttendees('+mid+',this.value)" style="padding:4px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:11px;background:#fff"><option value="all">📋 全部</option><option value="paid">✅ 已繳費</option><option value="pending">⏳ 待確認</option><option value="free">🆓 免費</option><option value="unpaid">❌ 未繳費</option><option value="absent">✕ 缺席</option></select><span style="font-size:10px;color:var(--text2)" id="att-count-'+mid+'">👥 共 '+att.length+' 人 · 👤會員 '+memberAtt.length+' · 👥來賓 '+guestAtt.length+'</span></div>';
 
   detail.firstElementChild.innerHTML = att.length === 0 ? '<div class="empty">無出席記錄</div>' :
     filterHtml + '<div id="att-list-'+mid+'" style="padding:4px 0">'+
@@ -1461,7 +1470,7 @@ async function renderTableBody(type, list) {
         }
         if (c==='payment') {
           var pmt = payMap[p.id] || '';
-          return '<td><span class="badge '+(pmt==='paid'?'badge-paid':pmt==='free'?'badge-free':'badge-unpaid')+'">'+(pmt==='paid'?'💰 已付':pmt==='free'?'🆓 免費':'❌💰 未付')+'</span></td>';
+          return '<td><span class="badge '+(pmt==='paid'?'badge-paid':pmt==='free'?'badge-free':pmt==='cash_pending'?'badge-pending':'badge-unpaid')+'">'+(pmt==='paid'?'💰 已付':pmt==='free'?'🆓 免費':pmt==='cash_pending'?'⏳ 待確認':'❌💰 未付')+'</span></td>';
         }
         return '<td>'+esc(p[c]||'-')+'</td>';
       }).join('')}
@@ -1773,7 +1782,7 @@ function renderCheckinOpList() {
       html += '<tr style="background:#f8fafc"><td colspan="6" style="padding:6px 12px;font-weight:700;font-size:11px;color:var(--text2)">'+sec.label+' ('+sec.list.length+')</td></tr>';
       sec.list.forEach(p => {
         const att = attMap[`${sec.key}_${p.id}`];
-        const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid';
+        const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid' && att.payment !== 'cash_pending';;
         const absent = att && att.arrival_time === 'absent';
         html += '<tr style="cursor:pointer;background:'+(absent?'#f8fafc':'')+'" onclick="autoArriveAndShow(\''+sec.key+'\','+p.id+',\''+esc(p.name)+'\')">';
         html += '<td style="padding:6px 8px"><div class="pc-av '+sec.key+'" style="width:22px;height:22px;font-size:10px;display:inline-flex">'+esc(p.name.charAt(0))+'</div></td>';
@@ -1799,7 +1808,7 @@ function renderCheckinOpList() {
       html += '<div class="ci-card-grid">';
       sec.list.forEach(p => {
         const att = attMap[`${sec.key}_${p.id}`];
-        const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid';
+        const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid' && att.payment !== 'cash_pending';;
         const absent = att && att.arrival_time === 'absent';
         html += '<div class="person-card'+(att?(absent?' absent':(paid?' has-att paid':' has-att unpaid')):'')+'" onclick="autoArriveAndShow(\''+sec.key+'\','+p.id+',\''+esc(p.name)+'\')" style="cursor:pointer">';
         html += '<div class="pc-av '+sec.key+'">'+esc(p.name.charAt(0))+'</div>';
@@ -1850,8 +1859,8 @@ function getOrCreateOpAtt(type, pid) {
   if (!att) { att = { person_type: type, person_id: pid, substitute: '', payment: '', payment_method: '', arrival_time: '', remark: '' }; meetingAttendance.push(att); }
   return att;
 }
-function payLabel(p) { return p==='free'?'免費':p==='paid'?'已付':'未付'; }
-function payClass(p) { return p==='free'?'badge-free':p==='paid'?'badge-paid':'badge-unpaid'; }
+function payLabel(p) { return p==='free'?'免費':p==='paid'?'已付':p==='cash_pending'?'待確認':'未付'; }
+function payClass(p) { return p==='free'?'badge-free':p==='paid'?'badge-paid':p==='cash_pending'?'badge-pending':'badge-unpaid'; }
 function isPaidOrFree(p) { return p==='paid'||p==='free'; }
 
 function togglePayOp(type, pid) {
@@ -1911,7 +1920,7 @@ async function confirmCheckin(type, pid, name) {
 
 async function showCheckinPersonOps(type, pid, name) {
   const att = meetingAttendance.find(a => a.person_type === type && a.person_id === pid);
-  const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid';
+  const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid' && att.payment !== 'cash_pending';;
   const absent = att && att.arrival_time === 'absent';
   // Load member receipts
   let receiptHtml = '';
@@ -1924,9 +1933,10 @@ async function showCheckinPersonOps(type, pid, name) {
     } catch(e) {}
   }
   var isFree = att && att.payment === 'free';
+  var isPending = att && att.payment === 'cash_pending';
   var curTbl = att ? esc(att.table_number||'') : '';
-  var payStatus = absent ? '✕ 缺席' : (isFree ? '🆓 免費' : (paid ? '✅ 已付' : '❌ 未付'));
-  var payColor = absent ? '#94a3b8' : (isFree ? '#3b82f6' : (paid ? '#10b981' : '#f59e0b'));
+  var payStatus = absent ? '✕ 缺席' : (isFree ? '🆓 免費' : (isPending ? '⏳ 待確認' : (paid ? '✅ 已付' : '❌ 未付')));
+  var payColor = absent ? '#94a3b8' : (isFree ? '#3b82f6' : (isPending ? '#d97706' : (paid ? '#10b981' : '#f59e0b')));
   var payHtml = '';
   var attId = att ? att.id : 0;
   if (!absent) {
@@ -2610,7 +2620,7 @@ async function showPersonOps(type, pid) {
   const p = list.find(x => x.id === pid);
   if (!p) return;
   const att = meetingAttendance.find(a => a.person_type === type && a.person_id === pid);
-  const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid';
+  const paid = att && att.payment && att.payment !== '' && att.payment !== 'unpaid' && att.payment !== 'cash_pending';;
   const absent = att && att.arrival_time === 'absent';
 
   let receiptHtml = '';
