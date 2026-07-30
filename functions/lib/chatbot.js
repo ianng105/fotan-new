@@ -35,7 +35,7 @@ export function getTools() {
     { type: 'function', function: { name: 'list_all_guests', description: '列出所有活躍來賓', parameters: { type: 'object', properties: {}, required: [] } } },
     { type: 'function', function: { name: 'update_settings', description: '更新系統設定', parameters: { type: 'object', properties: { settings: { type: 'object', description: 'key-value 設定對照表' } }, required: ['settings'] } } },
     { type: 'function', function: { name: 'delete_meeting', description: '刪除會議及其所有出席記錄', parameters: { type: 'object', properties: { meeting_id: { type: 'integer' } }, required: ['meeting_id'] } } },
-    { type: 'function', function: { name: 'generate_receipt', description: '收到付款資料後生成正式PDF收據並查詢付款人身份。當用戶提供姓名/電話/金額/日期等付款資訊，或說「出收據/開收據/整收據/paid/付款/generate receipt」時，必須使用此工具。一併處理：生成PDF+查詢資料庫匹配。', parameters: { type: 'object', properties: { name: { type: 'string', description: '付款人姓名' }, amount: { type: 'integer', description: '付款金額(HK$)' }, phone: { type: 'string', description: '電話號碼（可選）' }, date: { type: 'string', description: '日期（可選）例如 2026年7月15日' }, text: { type: 'string', description: '用戶原始輸入的全部文字' } }, required: [] } } }
+    { type: 'function', function: { name: 'generate_receipt', description: '收到付款資料後生成正式PDF收據並查詢付款人身份。當用戶提供姓名/電話/金額/日期等付款資訊，或說「出收據/開收據/整收據/paid/付款/generate receipt」時，必須使用此工具。一併處理：生成PDF+查詢資料庫匹配。', parameters: { type: 'object', properties: { name: { type: 'string', description: '付款人姓名' }, amount: { type: 'integer', description: '付款金額(HK$)' }, phone: { type: 'string', description: '電話號碼（可選）' }, date: { type: 'string', description: '日期（可選）例如 2026年7月15日' }, event: { type: 'string', description: '活動/事由名稱，填喺 Being in payment 行（可選）例如 四週年聚餐' }, text: { type: 'string', description: '用戶原始輸入的全部文字' } }, required: [] } } }
   ];
 }
 
@@ -45,6 +45,8 @@ export function getSystemPrompt() {
 ⚠️ 搜尋規則：當用戶要求搜尋、查詢、搵人、睇會員/來賓時，你必須調用 search_people function！唔准用「我幫你搵緊」敷衍！調用完後根據回傳結果列出名單。其他操作同樣：必須調用對應 function，唔准跳過！
 
 格式規則：每筆資料之間用空行分隔（即兩個換行）。名單用「名｜專業｜電話」格式。一定要有分行！唔准全部黐埋一齊！
+🔗 連結規則：generate_receipt 或其他工具回傳嘅下載連結，必須用 HTML <a> 標籤輸出，格式：<a href="連結" target="_blank">📥 撳呢度下載收據</a>。唔准只俾檔名、唔准改條link、唔准漏咗個 path！
+🧾 收據規則：如果用戶提到活動/聚餐/聚會名稱（如「四週年聚餐」「例會」「特別會議」），必須將活動名稱傳入 generate_receipt 嘅 event 參數。如果用戶冇提，就skip。
 
 火炭會：75會員 5來賓 | PayMe:payme.hsbc/fotan | WhatsApp:97188675
 📋 匯入規則：用戶貼名單時，自動調用 bulk_add_guests。唔好填 meeting_id（等系統自動用最新會議）。唔好自己作任何 ID！格式：「姓名 專業 💰/未付」。
@@ -578,7 +580,7 @@ export async function executeFunction(env, name, args) {
       return JSON.stringify({ ok: true, message: '已刪除會議 #' + args.meeting_id });
     }
     case 'generate_receipt': {
-      let { name, amount, phone, date, text } = args;
+      let { name, amount, phone, date, event, text } = args;
       // Parse from natural language text if fields not explicitly provided
       if (text && (!name || !amount)) {
         // Pattern 1: "Name paid amount" or "Name 已付 amount"
@@ -598,7 +600,7 @@ export async function executeFunction(env, name, args) {
 
       try {
         // Generate receipt directly using the same logic as skill.js (no external HTTP call)
-        const r2Key = await generateReceiptDirect(env, name, amount, phone || '', date || '');
+        const r2Key = await generateReceiptDirect(env, name, amount, phone || '', date || '', event || '');
         if (!r2Key) return JSON.stringify({ error: '收據PDF生成失敗' });
 
         const downloadUrl = '/api/image?name=' + encodeURIComponent(r2Key) + '&download=1';
@@ -727,16 +729,28 @@ export async function executeFunction(env, name, args) {
   }
 }
 
-// Auto-generate receipt from extracted payment data
-async function generateReceiptDirect(env, name, amount, phone, date) {
+// Auto-generate receipt with PNG template background + text overlay
+// Template coordinates (in 848×1264 px image space) — ADJUST to match your template
+const TPL = {
+  W: 848, H: 1264,
+  receiptNo:  { x: 580, y: 110, size: 8 },  // after "No:" top-right
+  payerName:  { x: 280, y: 420, size: 11 }, // "Receive from" row
+  dateDD:     { x: 380, y: 540, size: 11 }, // Date: dd box
+  dateMM:     { x: 460, y: 540, size: 11 }, // Date: mm box
+  dateYYYY:   { x: 540, y: 540, size: 11 }, // Date: yyyy box
+  amount:     { x: 420, y: 680, size: 11 }, // "Amount" row
+  eventName:  { x: 280, y: 830, size: 11 }, // "Being in payment" row
+};
+function tplX(px) { return px * (595.28 / TPL.W); }
+function tplY(py) { return 841.89 - py * (841.89 / TPL.H); }
+
+async function generateReceiptDirect(env, name, amount, phone, date, event) {
   try {
     let counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
     let counter = counterRow ? parseInt(counterRow.value) : 151;
     if (isNaN(counter) || counter < 151 || counter > 200) counter = 151;
     const receiptNum = String(counter).padStart(7, '0');
-    const now = new Date();
-    const issueDate = date || now.toISOString().split('T')[0];
-    const genTime = now.toISOString().replace('T', ' ').slice(0, 19);
+    const issueDate = date || new Date().toISOString().split('T')[0];
     const nextCounter = counter >= 200 ? 151 : counter + 1;
     await env.DB.prepare(
       "INSERT INTO settings (key, value) VALUES ('receipt_counter', ?) ON CONFLICT(key) DO UPDATE SET value = ?"
@@ -746,55 +760,106 @@ async function generateReceiptDirect(env, name, amount, phone, date) {
     const { default: fontkit } = await import('@pdf-lib/fontkit');
     const { loadChineseFont } = await import('./font-loader.js');
 
-    const PAGE_W=595.28, PAGE_H=841.89, M=50;
-    const BLACK=rgb(0,0,0), GRAY=rgb(0.38,0.38,0.38), LIGHT=rgb(0.55,0.55,0.55);
-    const GREEN=rgb(0.09,0.62,0.29), LINE=rgb(0.85,0.85,0.85);
-    function pt(mm){return mm*2.8346457;}
-    function tw(t,f,s){let w=0;for(const c of String(t))w+=/[一-鿿　-〿＀-￯]/.test(c)?s:s*0.55;return w;}
-    function T(page,t,x,y,f,s,o={}){if(!t)return;const w=tw(t,f,s);let dx=x;if(o.anchor==='center')dx=x-w/2;else if(o.anchor==='right')dx=x-w;page.drawText(String(t),{x:dx,y,font:f,size:s,color:o.color||BLACK});}
-    function H(page,x1,x2,y,th=0.5){page.drawLine({start:{x:x1,y},end:{x:x2,y},thickness:th,color:LINE});}
+    const PAGE_W = 595.28, PAGE_H = 841.89;
+    const BLACK = rgb(0,0,0), BLUE = rgb(0.05, 0.15, 0.55);
 
-    const doc=await PDFDocument.create();doc.registerFontkit(fontkit);
-    let chFont=null,helv=null;
-    try{const fd=await loadChineseFont();chFont=await doc.embedFont(fd);}catch(e){}
-    try{helv=await doc.embedFont(StandardFonts.Helvetica);}catch(e){}
-    if(!helv)helv=chFont;
-    const CF=chFont||helv, EN=helv;
-    const hasCN=!!chFont;
+    const bgBytes = await getBackgroundImage(env);
 
-    const page=doc.addPage([PAGE_W,PAGE_H]);let y=PAGE_H-M;
-    if(hasCN)T(page,'火炭會',M,y,CF,11,{color:GRAY});
-    T(page,'Fo Tan Chapter',PAGE_W-M,y,EN,8,{color:LIGHT,anchor:'right'});
-    y-=pt(6);H(page,M,PAGE_W-M,y);y-=pt(12);
-    if(hasCN)T(page,'付款收據',PAGE_W/2,y,CF,24,{anchor:'center',color:GREEN});
-    T(page,'PAYMENT RECEIPT',PAGE_W/2,y,EN,14,{anchor:'center',color:GREEN});y-=pt(14);
-    page.drawRectangle({x:PAGE_W-M-120,y:y-30,width:120,height:30,borderColor:LINE,borderWidth:0.5});
-    T(page,hasCN?'收據編號':'Receipt No.',PAGE_W-M-115,y-8,hasCN?CF:EN,7,{color:LIGHT});
-    T(page,receiptNum,PAGE_W-M-10,y-22,EN,14,{anchor:'right'});y-=pt(16);
-    H(page,M,PAGE_W-M,y);y-=pt(14);
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
 
-    const labelX=M,valueX=M+100,rowH=pt(16);
-    function row(label,cnLabel,value,cy){
-      const lbl=hasCN?cnLabel:label;
-      T(page,lbl,labelX,cy,hasCN?CF:EN,10,{color:GRAY});
-      T(page,value||'—',valueX,cy,hasCN?CF:EN,13,{color:BLACK});
+    let chFont = null;
+    try { const fd = await loadChineseFont(); chFont = await doc.embedFont(fd); } catch(e) {}
+    const F = chFont;
+
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+
+    if (bgBytes) {
+      // Detect PNG vs JPG and embed as background
+      const isPNG = bgBytes.length > 3 && bgBytes[1] === 0x50 && bgBytes[2] === 0x4E;
+      const bgImage = isPNG ? await doc.embedPng(bgBytes) : await doc.embedJpg(bgBytes);
+      page.drawImage(bgImage, { x: 0, y: 0, width: PAGE_W, height: PAGE_H });
+
+      // ── Overlay text on template (skip fields with no data) ──
+      if (F) {
+        if (receiptNum) {
+          page.drawText(receiptNum, { x: tplX(TPL.receiptNo.x), y: tplY(TPL.receiptNo.y), font: F, size: TPL.receiptNo.size, color: BLUE });
+        }
+        if (name) {
+          page.drawText(String(name), { x: tplX(TPL.payerName.x), y: tplY(TPL.payerName.y), font: F, size: TPL.payerName.size, color: BLUE });
+        }
+        if (issueDate) {
+          const parts = issueDate.split('-');
+          if (parts.length === 3) {
+            page.drawText(parts[2], { x: tplX(TPL.dateDD.x), y: tplY(TPL.dateDD.y), font: F, size: TPL.dateDD.size, color: BLUE });
+            page.drawText(parts[1], { x: tplX(TPL.dateMM.x), y: tplY(TPL.dateMM.y), font: F, size: TPL.dateMM.size, color: BLUE });
+            page.drawText(parts[0], { x: tplX(TPL.dateYYYY.x), y: tplY(TPL.dateYYYY.y), font: F, size: TPL.dateYYYY.size, color: BLUE });
+          }
+        }
+        if (amount && !isNaN(amount)) {
+          const amtStr = 'HK$ ' + String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+          page.drawText(amtStr, { x: tplX(TPL.amount.x), y: tplY(TPL.amount.y), font: F, size: TPL.amount.size, color: BLUE });
+        }
+        if (event) {
+          page.drawText(String(event), { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y), font: F, size: TPL.eventName.size, color: BLUE });
+        }
+      }
+    } else {
+      // Fallback: draw receipt from scratch
+      const GRAY = rgb(0.38,0.38,0.38), LIGHT = rgb(0.55,0.55,0.55);
+      const GREEN = rgb(0.09,0.62,0.29);
+      let helv = null;
+      try { helv = await doc.embedFont(StandardFonts.Helvetica); } catch(e) {}
+      const FB = helv || F;
+      function pt(mm) { return mm * 2.8346457; }
+      const M = 50;
+      let y = PAGE_H - M;
+      if (F) page.drawText('火炭會', { x: M, y, font: F, size: 11, color: GRAY });
+      page.drawText('Fo Tan Chapter', { x: PAGE_W-M, y, font: FB, size: 8, color: LIGHT });
+      y -= pt(12);
+      if (F) page.drawText('付款收據', { x: PAGE_W/2, y, font: F, size: 24, color: GREEN });
+      page.drawText('PAYMENT RECEIPT', { x: PAGE_W/2, y, font: FB, size: 14, color: GREEN });
+      y -= pt(30);
+      const rowH = pt(16);
+      if (F) page.drawText('付款人: ' + (name || '—'), { x: M, y, font: F, size: 12, color: BLACK });
+      y -= rowH;
+      if (F) page.drawText('金額: HK$ ' + String(amount||0).replace(/\B(?=(\d{3})+(?!\d))/g, ','), { x: M, y, font: F, size: 12, color: BLACK });
+      y -= rowH;
+      if (F) page.drawText('日期: ' + (issueDate || '—'), { x: M, y, font: F, size: 12, color: BLACK });
+      y -= rowH;
+      if (event && F) page.drawText('事由: ' + event, { x: M, y, font: F, size: 12, color: BLACK });
     }
-    row('Payer','付款人 / Payer',String(name),y);y-=rowH;
-    if(phone){row('Phone','電話 / Phone',String(phone),y);y-=rowH;}
-    row('Date','日期 / Date',issueDate,y);y-=rowH;
-    y-=pt(4);H(page,M,PAGE_W-M,y);y-=pt(10);
-    T(page,hasCN?'金額 / Amount':'Amount',M,y,hasCN?CF:EN,10,{color:GRAY});y-=pt(6);
-    T(page,'HK$ '+String(amount).replace(/\B(?=(\d{3})+(?!\d))/g,','),M,y,hasCN?CF:EN,28,{color:GREEN});y-=pt(16);
-    H(page,M,PAGE_W-M,y);y-=pt(14);
-    T(page,hasCN?'此收據由 火炭會 系統自動生成':'Auto-generated by Fo Tan Chapter',PAGE_W/2,y,hasCN?CF:EN,7,{anchor:'center',color:LIGHT});y-=pt(4);
-    T(page,'Generated: '+genTime,PAGE_W/2,y,EN,6,{anchor:'center',color:LIGHT});y-=pt(4);
-    if(hasCN)T(page,'此為電腦編製收據，無需簽名蓋章',PAGE_W/2,y,CF,7,{anchor:'center',color:LIGHT});
 
-    const pdfBytes=await doc.save();
-    const r2Key='receipts/receipt-'+receiptNum+'.pdf';
-    await env.R2.put(r2Key,pdfBytes,{httpMetadata:{contentType:'application/pdf',cacheControl:'no-cache'}});
+    const pdfBytes = await doc.save();
+    const r2Key = 'receipts/receipt-' + receiptNum + '.pdf';
+    await env.R2.put(r2Key, pdfBytes, { httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' } });
     return r2Key;
-  } catch(e) { console.error('generateReceiptDirect error:',e.message); return null; }
+  } catch(e) { console.error('generateReceiptDirect error:', e.message); return null; }
+}
+
+// Fetch receipt template background PNG from R2, auto-seeding from static assets in dev
+async function getBackgroundImage(env) {
+  const R2_KEY = 'templates/receipt-bg.png';
+  const LOCAL_FILE = '火炭會receipt_template.png';
+  try {
+    const obj = await env.R2.get(R2_KEY);
+    if (obj) return new Uint8Array(await obj.arrayBuffer());
+
+    // Not in R2 — try to seed by fetching the static file
+    try {
+      const staticUrl = 'http://127.0.0.1:8787/' + encodeURIComponent(LOCAL_FILE);
+      const resp = await fetch(staticUrl);
+      if (resp.ok) {
+        const data = new Uint8Array(await resp.arrayBuffer());
+        await env.R2.put(R2_KEY, data, {
+          httpMetadata: { contentType: 'image/png', cacheControl: 'public, max-age=31536000' }
+        });
+        return data;
+      }
+    } catch (fetchErr) { /* not reachable */ }
+
+    return null;
+  } catch (e) { console.error('getBackgroundImage error:', e.message); return null; }
 }
 
 export async function callQwen(env, messages, apiKey) {
@@ -909,7 +974,7 @@ export async function callQwen(env, messages, apiKey) {
           if (sr.people.length > 0 && extracted.amount) {
             try {
               const payerName = sr.people[0].name;
-              const rKey = await generateReceiptDirect(env, payerName, extracted.amount, extracted.phone || '', extracted.date || '');
+              const rKey = await generateReceiptDirect(env, payerName, extracted.amount, extracted.phone || '', extracted.date || '', '');
               const receiptUrl = rKey ? '/api/image?name=' + encodeURIComponent(rKey) + '&download=1' : null;
               if (receiptUrl) {
                 summary += '\n🧾 收據已自動生成！\n📥 ' + receiptUrl;

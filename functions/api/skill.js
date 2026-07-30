@@ -960,7 +960,7 @@ export async function onRequest(context) {
 
     // ── generate_receipt ─────────────────────────
     if (action === 'generate_receipt') {
-      let { name, amount, phone, date, text } = body;
+      let { name, amount, phone, date, event, text } = body;
 
       // Parse natural language text input
       if (!name && text) {
@@ -976,9 +976,7 @@ export async function onRequest(context) {
       if (isNaN(counter) || counter < 151 || counter > 200) counter = 151;
 
       const receiptNum = String(counter).padStart(7, '0');
-      const now = new Date();
-      const issueDate = date || now.toISOString().split('T')[0]; // YYYY-MM-DD
-      const genTime = now.toISOString().replace('T', ' ').slice(0, 19); // ISO timestamp
+      const issueDate = date || new Date().toISOString().split('T')[0];
 
       // Increment and save counter
       const nextCounter = counter >= 200 ? 151 : counter + 1;
@@ -987,97 +985,105 @@ export async function onRequest(context) {
       ).bind(String(nextCounter), String(nextCounter)).run();
 
       try {
-        const PAGE_W = 595.28, PAGE_H = 841.89, MARGIN = 50;
-        const BLACK = rgb(0,0,0), GRAY = rgb(0.38,0.38,0.38), LIGHT = rgb(0.55,0.55,0.55);
-        const GREEN = rgb(0.09,0.62,0.29), LINE = rgb(0.85,0.85,0.85);
+        const PAGE_W = 595.28, PAGE_H = 841.89;
+        const BLACK = rgb(0,0,0), BLUE = rgb(0.05, 0.15, 0.55);
 
-        function pt(mm) { return mm * 2.8346457; }
-        function tw(t, f, s) { let w=0; for(const c of String(t)) w+= /[一-鿿　-〿＀-￯]/.test(c)?s:s*0.55; return w; }
-        function T(page, t, x, y, f, s, o={}) {
-          if(!t)return; const w=tw(t,f,s); let dx=x;
-          if(o.anchor==='center')dx=x-w/2; else if(o.anchor==='right')dx=x-w;
-          page.drawText(String(t),{x:dx,y,font:f,size:s,color:o.color||BLACK});
-        }
-        function H(page, x1, x2, y, th=0.5) { page.drawLine({start:{x:x1,y},end:{x:x2,y},thickness:th,color:LINE}); }
+        // Template coordinates (848×1264 px) — same as chatbot.js TPL
+        const TPL = {
+          receiptNo: { x: 580, y: 110, size: 8 },
+          payerName: { x: 280, y: 420, size: 11 },
+          dateDD:    { x: 380, y: 540, size: 11 },
+          dateMM:    { x: 460, y: 540, size: 11 },
+          dateYYYY:  { x: 540, y: 540, size: 11 },
+          amount:    { x: 420, y: 680, size: 11 },
+          eventName: { x: 280, y: 830, size: 11 },
+        };
+        function tplX(px) { return px * (PAGE_W / 848); }
+        function tplY(py) { return PAGE_H - py * (PAGE_H / 1264); }
 
         const doc = await PDFDocument.create();
         doc.registerFontkit(fontkit);
 
-        let chFont = null, helvetica = null;
-        try { const fd = await loadChineseFont(); chFont = await doc.embedFont(fd); } catch(e) { console.error('Chinese font failed:', e.message); }
-        try { helvetica = await doc.embedFont(StandardFonts.Helvetica); } catch(e) {}
-        if (!helvetica) helvetica = chFont;
-        const F = chFont || helvetica, FB = helvetica;
-        const hasCN = !!chFont;
-        // Strip CJK if no Chinese font (pdf-lib validates encoding at save time)
-        function s(t) { return hasCN ? String(t) : String(t).replace(/[^\x00-\x7F]/g, '?'); }
+        let chFont = null;
+        try { const fd = await loadChineseFont(); chFont = await doc.embedFont(fd); } catch(e) {}
+        const F = chFont;
+
+        // Try to load background PNG template from R2
+        let bgBytes = null;
+        try {
+          const bgObj = await env.R2.get('templates/receipt-bg.png');
+          if (!bgObj) {
+            try {
+              const staticUrl = 'http://127.0.0.1:8787/' + encodeURIComponent('火炭會receipt_template.png');
+              const resp = await fetch(staticUrl);
+              if (resp.ok) {
+                const data = new Uint8Array(await resp.arrayBuffer());
+                await env.R2.put('templates/receipt-bg.png', data, {
+                  httpMetadata: { contentType: 'image/png', cacheControl: 'public, max-age=31536000' }
+                });
+                bgBytes = data;
+              }
+            } catch (fetchErr) { /* not reachable */ }
+          } else {
+            bgBytes = new Uint8Array(await bgObj.arrayBuffer());
+          }
+        } catch (e) { /* R2 access error, skip background */ }
 
         const page = doc.addPage([PAGE_W, PAGE_H]);
-        let y = PAGE_H - MARGIN;
 
-        // ── Header ──
-        if (hasCN) T(page, '火炭會', MARGIN, y, F, 11, { color: GRAY });
-        T(page, 'Fo Tan Chapter', PAGE_W - MARGIN, y, FB, 8, { color: LIGHT, anchor: 'right' });
-        y -= pt(6);
-        H(page, MARGIN, PAGE_W - MARGIN, y);
-        y -= pt(12);
+        if (bgBytes) {
+          const isPNG = bgBytes.length > 3 && bgBytes[1] === 0x50 && bgBytes[2] === 0x4E;
+          const bgImage = isPNG ? await doc.embedPng(bgBytes) : await doc.embedJpg(bgBytes);
+          page.drawImage(bgImage, { x: 0, y: 0, width: PAGE_W, height: PAGE_H });
 
-        // ── Title ──
-        if (hasCN) T(page, '付款收據', PAGE_W / 2, y, F, 24, { anchor: 'center', color: GREEN });
-        T(page, 'PAYMENT RECEIPT', PAGE_W / 2, y, FB, 14, { anchor: 'center', color: GREEN });
-        y -= pt(14);
-
-        // ── Receipt number (top right box) ──
-        page.drawRectangle({ x: PAGE_W - MARGIN - 120, y: y - 30, width: 120, height: 30, borderColor: LINE, borderWidth: 0.5 });
-        T(page, hasCN ? '收據編號' : 'Receipt No.', PAGE_W - MARGIN - 115, y - 8, hasCN ? F : FB, 7, { color: LIGHT });
-        T(page, receiptNum, PAGE_W - MARGIN - 10, y - 22, FB, 14, { anchor: 'right' });
-        y -= pt(16);
-
-        H(page, MARGIN, PAGE_W - MARGIN, y);
-        y -= pt(14);
-
-        // ── Info rows ──
-        const labelX = MARGIN, valueX = MARGIN + 100, rowH = pt(16);
-        function row(label, cnLabel, value, cy) {
-          T(page, s(hasCN ? cnLabel : label), labelX, cy, hasCN ? F : FB, 10, { color: GRAY });
-          T(page, s(value || '—'), valueX, cy, F, 13, { color: BLACK });
-        }
-
-        row('Payer', '付款人 / Payer', String(name), y); y -= rowH;
-        if (phone) { row('Phone', '電話 / Phone', String(phone), y); y -= rowH; }
-        row('Date', '日期 / Date', s(issueDate), y); y -= rowH;
-        y -= pt(4);
-        H(page, MARGIN, PAGE_W - MARGIN, y);
-        y -= pt(10);
-
-        // ── Amount (prominent) ──
-        T(page, hasCN ? '金額 / Amount' : 'Amount', MARGIN, y, hasCN ? F : FB, 10, { color: GRAY });
-        y -= pt(6);
-        T(page, 'HK$ ' + String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ','), MARGIN, y, F, 28, { color: GREEN });
-        y -= pt(16);
-        H(page, MARGIN, PAGE_W - MARGIN, y);
-        y -= pt(14);
-
-        // ── Footer ──
-        if (hasCN) T(page, '此收據由 火炭會 系統自動生成', PAGE_W / 2, y, F, 7, { anchor: 'center', color: LIGHT });
-        else T(page, 'Auto-generated by Fo Tan Chapter', PAGE_W / 2, y, FB, 7, { anchor: 'center', color: LIGHT });
-        y -= pt(4);
-        T(page, 'Generated: ' + genTime, PAGE_W / 2, y, FB, 6, { anchor: 'center', color: LIGHT });
-        y -= pt(4);
-        if (hasCN) T(page, '此為電腦編製收據，無需簽名蓋章', PAGE_W / 2, y, F, 7, { anchor: 'center', color: LIGHT });
-
-        // Helper: draw text safely, falling back to ASCII
-        function safeT(page, t, x, y, f, s, o) {
-          try { T(page, t, x, y, f, s, o); } catch(e) {
-            // If CJK font issues, strip to ASCII
-            const ascii = String(t).replace(/[^\x00-\x7F]/g, '?');
-            try { T(page, ascii, x, y, FB, s, o); } catch(e2) {}
+          // Overlay text on template
+          if (F) {
+            if (receiptNum) page.drawText(receiptNum, { x: tplX(TPL.receiptNo.x), y: tplY(TPL.receiptNo.y), font: F, size: TPL.receiptNo.size, color: BLUE });
+            if (name) page.drawText(String(name), { x: tplX(TPL.payerName.x), y: tplY(TPL.payerName.y), font: F, size: TPL.payerName.size, color: BLUE });
+            if (issueDate) {
+              const parts = issueDate.split('-');
+              if (parts.length === 3) {
+                page.drawText(parts[2], { x: tplX(TPL.dateDD.x), y: tplY(TPL.dateDD.y), font: F, size: TPL.dateDD.size, color: BLUE });
+                page.drawText(parts[1], { x: tplX(TPL.dateMM.x), y: tplY(TPL.dateMM.y), font: F, size: TPL.dateMM.size, color: BLUE });
+                page.drawText(parts[0], { x: tplX(TPL.dateYYYY.x), y: tplY(TPL.dateYYYY.y), font: F, size: TPL.dateYYYY.size, color: BLUE });
+              }
+            }
+            if (amount && !isNaN(amount)) {
+              page.drawText('HK$ ' + String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ','), { x: tplX(TPL.amount.x), y: tplY(TPL.amount.y), font: F, size: TPL.amount.size, color: BLUE });
+            }
+            if (event) page.drawText(String(event), { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y), font: F, size: TPL.eventName.size, color: BLUE });
           }
+        } else {
+          // ── Fallback: draw receipt from scratch ──
+          const GRAY = rgb(0.38,0.38,0.38), LIGHT = rgb(0.55,0.55,0.55);
+          const GREEN = rgb(0.09,0.62,0.29), LINE = rgb(0.85,0.85,0.85);
+
+          function pt(mm) { return mm * 2.8346457; }
+          let chFont2 = null, helvetica = null;
+          try { const fd = await loadChineseFont(); chFont2 = await doc.embedFont(fd); } catch(e) {}
+          try { helvetica = await doc.embedFont(StandardFonts.Helvetica); } catch(e) {}
+          if (!helvetica) helvetica = chFont2;
+          const FF = chFont2 || helvetica, FB = helvetica;
+          const hasCN = !!chFont2;
+          function s(t) { return hasCN ? String(t) : String(t).replace(/[^\x00-\x7F]/g, '?'); }
+
+          const MARGIN = 50;
+          let y = PAGE_H - MARGIN;
+          if (hasCN) { page.drawText('火炭會', { x: MARGIN, y, font: FF, size: 11, color: GRAY }); }
+          page.drawText('Fo Tan Chapter', { x: PAGE_W - MARGIN, y, font: FB, size: 8, color: LIGHT });
+          y -= pt(6);
+          if (hasCN) { page.drawText('付款收據', { x: PAGE_W/2, y, font: FF, size: 24, color: GREEN }); }
+          page.drawText('PAYMENT RECEIPT', { x: PAGE_W/2, y, font: FB, size: 14, color: GREEN });
+          y -= pt(30);
+          const rowH = pt(16);
+          if (FF) page.drawText('付款人: ' + (name||'—'), { x: MARGIN, y, font: FF, size: 12, color: BLACK }); y -= rowH;
+          if (FF) page.drawText('金額: HK$ ' + String(amount||0).replace(/\B(?=(\d{3})+(?!\d))/g, ','), { x: MARGIN, y, font: FF, size: 12, color: BLACK }); y -= rowH;
+          if (FF) page.drawText('日期: ' + (issueDate||'—'), { x: MARGIN, y, font: FF, size: 12, color: BLACK }); y -= rowH;
+          if (event && FF) page.drawText('事由: ' + event, { x: MARGIN, y, font: FF, size: 12, color: BLACK });
         }
 
         const pdfBytes = await doc.save();
 
-        // Save to R2
         const r2Key = 'receipts/receipt-' + receiptNum + '.pdf';
         await env.R2.put(r2Key, pdfBytes, {
           httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' }

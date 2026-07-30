@@ -2609,6 +2609,8 @@ function appendChatMsg(role, text) {
   // Strip markdown code fences, convert newlines to <br>
   var t = text.replace(/```/g, '');
   t = t.replace(/\n/g, '<br>');
+  // Convert Markdown links to clickable HTML links
+  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
   div.innerHTML = t;
   document.getElementById('chat-msgs').appendChild(div);
   document.getElementById('chat-msgs').scrollTop = document.getElementById('chat-msgs').scrollHeight;
