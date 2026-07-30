@@ -2931,6 +2931,7 @@ async function renderWaCertPage(pc) {
   pc.innerHTML = `<h2 style="font-size:20px;font-weight:700;margin-bottom:16px">💰 入錢憑證</h2>
     <div class="panel">
       <div class="panel-header"><h2>📋 已上傳憑證</h2>
+        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:11px;padding:4px 10px" onclick="bulkPrintReceipts()">🧾 批次出收據</button>
         <select id="wacert-meeting-filter" onchange="loadWaCerts()" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
           <option value="">📋 全部聚會</option>
         </select></div>
@@ -2971,7 +2972,8 @@ async function loadWaCerts() {
       <td style="max-width:160px;white-space:pre-wrap;word-break:break-word;cursor:pointer" onclick="editCertComment(${r.id},'${esc(r.comment||'')}')" title="點擊修改備註">${esc(r.comment||'—')}</td>
       <td style="font-size:11px">${esc((r.created_at||'').substring(0,16))}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">檢視收據</button>
+        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt?id=${r.id}','_blank')">🧾 出收據</button>
+        <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">PDF版</button>
         ${r.person_name
           ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>
              <button class="btn btn-sm" style="background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="markCommitteePaid(${r.id},'${esc(r.person_type||'')}',${r.person_id||0})" title="標記委員6個月已付">🏅6月</button>`
@@ -3009,6 +3011,22 @@ async function markCommitteePaid(certId, personType, personId) {
     toast('✅ 已標記委員 6 個月會費 ($1,320) — ' + done + ' 場會議已付');
     loadWaCerts();
   } catch(e) { toast('失敗: ' + e.message); }
+}
+function bulkPrintReceipts() {
+  // Get all linked cert IDs from the current table
+  var rows = document.querySelectorAll('#wacert-list tr');
+  var ids = [];
+  rows.forEach(function(row) {
+    var btn = row.querySelector('button[onclick*="unlinkWaCert"]');
+    if (btn) {
+      var onclick = btn.getAttribute('onclick') || '';
+      var match = onclick.match(/unlinkWaCert\((\d+)\)/);
+      if (match) ids.push(match[1]);
+    }
+  });
+  if (!ids.length) return toast('暫無已關聯嘅憑證');
+  if (!confirm('確定為 ' + ids.length + ' 位已關聯人士批次出收據？')) return;
+  window.open('/api/receipt?ids=' + ids.join(','), '_blank');
 }
 function deleteWaCert(id) {
   if (!confirm('確定刪除此憑證？')) return;
