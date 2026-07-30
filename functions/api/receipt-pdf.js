@@ -45,7 +45,18 @@ export async function onRequest(context) {
     const dateStr = cert.created_at
       ? new Date(cert.created_at.replace(' ', 'T') + 'Z').toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
       : '—';
-    const certIdStr = String(cert.id).padStart(6, '0');
+    // Get or assign receipt number from counter
+    let receiptNum = cert.receipt_number ? String(cert.receipt_number) : null;
+    if (!receiptNum) {
+      const counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
+      let counter = parseInt(counterRow?.value || '101', 10);
+      receiptNum = String(counter).padStart(7, '0');
+      // Save assigned number to cert and increment counter
+      await env.DB.prepare("UPDATE whatsapp_cert SET receipt_number=? WHERE id=?").bind(receiptNum, certId).run();
+      counter++;
+      await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('receipt_counter', ?)").bind(String(counter)).run();
+    }
+    const certIdStr = receiptNum;
 
     // ── Load template PDF ──
     const templateBuf = loadReceiptTemplate();

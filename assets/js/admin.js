@@ -2193,6 +2193,7 @@ async function renderSettingsPage(pc) {
   });
 
   pc.innerHTML = '<div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between"><h2 style="font-size:20px;font-weight:700">⚙️ 系統設定</h2><button class="btn btn-primary" onclick="saveSettings()">💾 儲存全部設定</button></div>' + html +
+    '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🧾</span> 收據編號管理</div><div class="settings-section-body" style="padding:16px"><p style="font-size:12px;color:var(--text2);margin-bottom:8px">會計師每次提供 500 個編號，系統自動遞增。用晒再入新起始編號。</p><div style="display:flex;gap:8px;align-items:flex-end"><div style="flex:1"><label style="font-size:11px;color:var(--text2)">下個收據編號（例：0000101）</label><input type="text" id="set-receipt-counter" placeholder="0000101" style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none" value="'+esc(settings.receipt_counter||'101')+'"></div><button class="btn btn-primary" onclick="saveReceiptCounter()">設定起始編號</button></div><p id="rc-msg" style="font-size:11px;margin-top:6px;display:none"></p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🤖</span> Telegram Bot 設定</div><div class="settings-section-body" style="padding:16px;text-align:center"><p style="font-size:13px;color:var(--text2);margin-bottom:8px">Bot: @fotanbot · 收發訊息 + R2 檔案上傳</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=setup\').then(r=>r.json()).then(d=>toast(d.ok?\'Webhook 已設定！\':\'失敗：\'+d.description))">🔗 設定 Webhook</button><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=info\').then(r=>r.json()).then(d=>toast(JSON.stringify(d.result||d)))">ℹ️ Webhook 狀態</button><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=delete\').then(r=>r.json()).then(d=>toast(d.ok?\'Webhook 已刪除\':\'失敗\'))">🗑️ 刪除 Webhook</button></div><p style="font-size:11px;color:var(--text2);margin-top:8px">Webhook URL: https://fotan.techforliving.net/api/telegram</p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🔐</span> 修改管理密碼</div><div class="settings-section-body" style="padding:16px"><div style="display:flex;gap:8px;align-items:flex-end"><input type="password" id="set-old-pwd" placeholder="舊密碼" style="flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none"><input type="password" id="set-new-pwd" placeholder="新密碼" style="flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none"><button class="btn btn-primary" onclick="changePassword()">確認修改</button></div><p id="pwd-msg" style="font-size:11px;margin-top:6px;display:none"></p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">💿</span> 資料庫備份</div><div class="settings-section-body" style="padding:16px;text-align:center"><p style="font-size:13px;color:var(--text2);margin-bottom:12px">下載所有資料表（members, guests, meetings, attendance, settings, receipts）為 JSON 檔案</p><button class="btn btn-primary" onclick="window.open(\'/api/backup\')">📥 下載備份 JSON</button></div></div>';
@@ -2761,7 +2762,18 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
 }
 
-async function changePassword() {
+async async function saveReceiptCounter() {
+  var el = document.getElementById('set-receipt-counter');
+  var num = parseInt(el.value.replace(/^0+/,'') || '0', 10);
+  if (num < 1) { document.getElementById('rc-msg').textContent = '請輸入有效數字'; document.getElementById('rc-msg').style.display = 'block'; return }
+  var padded = String(num).padStart(7, '0');
+  await api('/settings', { method: 'PUT', body: JSON.stringify({ receipt_counter: padded }) });
+  document.getElementById('rc-msg').textContent = '✅ 下個收據編號設為：' + padded;
+  document.getElementById('rc-msg').style.color = '#10b981';
+  document.getElementById('rc-msg').style.display = 'block';
+  el.value = padded;
+}
+function changePassword() {
   const pwd = document.getElementById('set-new-pwd').value.trim();
   const msg = document.getElementById('pwd-msg');
   const oldPwd = document.getElementById('set-old-pwd').value;
