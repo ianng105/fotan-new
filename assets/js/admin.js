@@ -2762,7 +2762,7 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
 }
 
-async async function saveReceiptCounter() {
+async function saveReceiptCounter() {
   var el = document.getElementById('set-receipt-counter');
   var num = parseInt(el.value.replace(/^0+/,'') || '0', 10);
   if (num < 1) { document.getElementById('rc-msg').textContent = '請輸入有效數字'; document.getElementById('rc-msg').style.display = 'block'; return }
@@ -2773,7 +2773,7 @@ async async function saveReceiptCounter() {
   document.getElementById('rc-msg').style.display = 'block';
   el.value = padded;
 }
-function changePassword() {
+async function changePassword() {
   const pwd = document.getElementById('set-new-pwd').value.trim();
   const msg = document.getElementById('pwd-msg');
   const oldPwd = document.getElementById('set-old-pwd').value;
