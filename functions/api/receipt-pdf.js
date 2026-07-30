@@ -107,8 +107,15 @@ export async function onRequest(context) {
 
     // --- Right column: Payment info ---
     // Template sample: payment date, "FPS"
-    field(page, dateStr,                  335, 613, 210, 22, font, 14, DARK);
-    field(page, 'FPS / 轉數快',           335, 588, 210, 18, font, 10, DARK);
+    // Committee 6-month payment: show custom amount
+    const displayAmount = cert.amount > 0 ? cert.amount : 398;
+    const amountStr = 'HK$ ' + displayAmount.toLocaleString();
+    field(page, dateStr,                  335, 644, 210, 22, font, 14, DARK);
+    field(page, amountStr,                335, 613, 210, 28, font, 18, DARK);
+    const paymentDesc = cert.amount >= 1000
+      ? '委員 6 個月會費 (' + cert.note + ')'
+      : 'FPS / 轉數快';
+    field(page, paymentDesc,              335, 588, 210, 18, font, 10, DARK);
 
     // --- Remarks ---
     if (cert.note) {
