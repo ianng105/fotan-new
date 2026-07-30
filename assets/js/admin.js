@@ -2973,7 +2973,8 @@ async function loadWaCerts() {
       <td style="white-space:nowrap">
         <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">檢視收據</button>
         ${r.person_name
-          ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>`
+          ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>
+             <button class="btn btn-sm" style="background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="markCommitteePaid(${r.id},'${esc(r.person_type||'')}',${r.person_id||0})" title="標記委員6個月已付">🏅6月</button>`
           : `<button class="btn btn-sm" style="background:#3b82f6;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="showLinkCertModal(${r.id})">關聯來賓</button>
              <button class="btn btn-danger btn-sm" onclick="deleteWaCert(${r.id})" style="font-size:10px;padding:2px 6px">刪除</button>`}
       </td>
@@ -2981,6 +2982,34 @@ async function loadWaCerts() {
   } catch(e) { document.getElementById('wacert-list').innerHTML = '<tr><td colspan="6">載入失敗</td></tr>'; }
 }
 
+async function markCommitteePaid(certId, personType, personId) {
+  if (!personId) return toast('請先關聯來賓');
+  if (!confirm('確定標記此委員已繳付 6 個月會費（$220×6=$1,320）？\n\n系統會自動標記未來 6 次會議為已付。')) return;
+  try {
+    // 1. Update cert amount to 1320
+    await fetch('/api/whatsapp-cert', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id: certId, amount: 1320, note: '委員 6 個月會費 7-12月' })
+    });
+    // 2. Get upcoming meetings
+    var mts = await api('/meetings');
+    var upcoming = mts.filter(function(m){ return m.date >= '2026-07-01' && m.date <= '2026-12-31' && m.type === 'regular'; })
+      .sort(function(a,b){ return a.date.localeCompare(b.date); }).slice(0, 6);
+    // 3. Mark paid for each meeting
+    var done = 0;
+    for (var i = 0; i < upcoming.length; i++) {
+      var m = upcoming[i];
+      var attList = await api('/attendance?meeting_id=' + m.id);
+      var att = attList.find(function(a){ return a.person_type === personType && a.person_id === personId; });
+      if (att) {
+        await api('/attendance', { method: 'PUT', body: JSON.stringify({ id: att.id, payment: 'paid' }) });
+        done++;
+      }
+    }
+    toast('✅ 已標記委員 6 個月會費 ($1,320) — ' + done + ' 場會議已付');
+    loadWaCerts();
+  } catch(e) { toast('失敗: ' + e.message); }
+}
 function deleteWaCert(id) {
   if (!confirm('確定刪除此憑證？')) return;
   fetch('/api/whatsapp-cert?id='+id, { method: 'DELETE' }).then(r => r.json()).then(d => {

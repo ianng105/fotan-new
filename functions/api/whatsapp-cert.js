@@ -66,6 +66,14 @@ export async function onRequest(context) {
     }
 
     // DELETE — cannot delete linked certs
+    if (request.method === 'PUT') {
+      const body = await request.json();
+      const { id, amount, note } = body;
+      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: cors });
+      if (amount !== undefined) await env.DB.prepare('UPDATE whatsapp_cert SET amount=? WHERE id=?').bind(amount, id).run();
+      if (note !== undefined) await env.DB.prepare('UPDATE whatsapp_cert SET note=? WHERE id=?').bind(note, id).run();
+      return Response.json({ ok: true }, { headers: cors });
+    }
     if (request.method === 'DELETE') {
       const id = url.searchParams.get('id');
       if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: cors });
