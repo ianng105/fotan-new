@@ -2918,7 +2918,10 @@ function formatFileSize(bytes) {
 async function renderWaCertPage(pc) {
   pc.innerHTML = `<h2 style="font-size:20px;font-weight:700;margin-bottom:16px">💰 入錢憑證</h2>
     <div class="panel">
-      <div class="panel-header"><h2>📋 已上傳憑證</h2></div>
+      <div class="panel-header"><h2>📋 已上傳憑證</h2>
+        <select id="wacert-meeting-filter" onchange="loadWaCerts()" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+          <option value="">📋 全部聚會</option>
+        </select></div>
       <div class="panel-body" style="padding:0">
         <table class="data-table">
           <thead><tr><th>縮圖</th><th>來自那個WhatsApp</th><th>關聯的嘉賓</th><th>相片備註</th><th>日期</th><th></th></tr></thead>
@@ -2927,11 +2930,26 @@ async function renderWaCertPage(pc) {
       </div>
     </div>`;
   loadWaCerts();
+  // Populate meeting filter
+  try {
+    const mts = await api('/meetings');
+    const sel = document.getElementById('wacert-meeting-filter');
+    if (sel) {
+      mts.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.date + ' ' + mLblText(m.type);
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {}
 }
 
 async function loadWaCerts() {
   try {
-    const rows = await fetch('/api/whatsapp-cert').then(r => r.json());
+    const mid = document.getElementById('wacert-meeting-filter')?.value || '';
+    const url = mid ? '/api/whatsapp-cert?meeting_id=' + mid : '/api/whatsapp-cert';
+    const rows = await fetch(url).then(r => r.json());
     const el = document.getElementById('wacert-list');
     if (!rows.length) { el.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text2)">暫無憑證</td></tr>'; return; }
     el.innerHTML = rows.map(r => `<tr>
