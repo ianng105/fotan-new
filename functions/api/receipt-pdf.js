@@ -50,13 +50,15 @@ export async function onRequest(context) {
     if (!receiptNum) {
       const counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
       let counter = parseInt(counterRow?.value || '101', 10);
-      receiptNum = String(counter).padStart(7, '0');
+      receiptNum = '#' + new Date().getFullYear().toString().slice(2) + '-' + String(counter).padStart(6, '0');
       // Save assigned number to cert and increment counter
       await env.DB.prepare("UPDATE whatsapp_cert SET receipt_number=? WHERE id=?").bind(receiptNum, certId).run();
       counter++;
       await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('receipt_counter', ?)").bind(String(counter)).run();
     }
-    const certIdStr = receiptNum;
+    // Format: #26-000031
+    const yearPrefix = new Date().getFullYear().toString().slice(2);
+    const certIdStr = receiptNum || ('#' + yearPrefix + '-' + String(cert.id).padStart(6, '0'));
 
     // ── Load template PDF ──
     const templateBuf = loadReceiptTemplate();

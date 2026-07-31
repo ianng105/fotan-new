@@ -28,7 +28,8 @@ export async function onRequest(context) {
       if (!receiptNum) {
         const counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
         let counter = parseInt(counterRow?.value || '101', 10);
-        receiptNum = String(counter).padStart(7, '0');
+        const yearPrefix = new Date().getFullYear().toString().slice(2);
+        receiptNum = '#' + yearPrefix + '-' + String(counter).padStart(6, '0');
         await env.DB.prepare("UPDATE whatsapp_cert SET receipt_number=? WHERE id=?").bind(receiptNum, id).run();
         counter++;
         await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('receipt_counter', ?)").bind(String(counter)).run();
