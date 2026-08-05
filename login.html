@@ -90,7 +90,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sa
 <div id="top" style="position:relative"><h1>火炭會聚會 <span style="font-size:10px;opacity:.5">v3.0</span></h1><div id="sub"></div><a href="#" onclick="doLogout();return false" style="position:absolute;top:10px;right:14px;color:#fff;font-size:12px;opacity:.75;text-decoration:none">登出</a></div>
 <div id="search-bar" style="display:none"><div class="hdr" id="list-hdr"><span>未簽到嘉賓</span><span class="cnt">0 / 0</span></div><div style="padding:8px 16px"><input id="search-input" type="text" placeholder="搜尋名字/電話/行業/職位..." style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-size:14px;outline:none;background:var(--bg)"></div></div>
 <div id="main"></div>
-<div id="bar"><button id="bar-unchecked" class="tab-item active" onclick="switchTab('unchecked')"><span class="tab-icon">👥</span><span>未簽到</span></button><button id="bar-checked" class="tab-item" onclick="switchTab('checked')"><span class="tab-icon">✅</span><span>已簽到</span></button><button class="tab-item" onclick="showSchedule()"><span class="tab-icon">📋</span><span>流程</span></button><button class="tab-item" onclick="showGame()"><span class="tab-icon">🎮</span><span>遊戲</span></button><button class="tab-item" onclick="showProductIntro()"><span class="tab-icon">🏅</span><span>委員介紹</span></button><button class="tab-item" onclick="showAlbum()"><span class="tab-icon">📸</span><span>相簿</span></button></div>
+<div id="bar"><button id="bar-unchecked" class="tab-item active" onclick="switchTab('unchecked')"><span class="tab-icon">👥</span><span>未簽到</span></button><button id="bar-checked" class="tab-item" onclick="switchTab('checked')"><span class="tab-icon">✅</span><span>已簽到</span></button><button class="tab-item" onclick="showSchedule()"><span class="tab-icon">📋</span><span>流程</span></button><button class="tab-item" onclick="showGame()"><span class="tab-icon">🎮</span><span>遊戲</span></button><button class="tab-item" onclick="showProductIntro()"><span class="tab-icon">🏅</span><span>委員介紹</span></button><button class="tab-item" onclick="showAlbum()"><span class="tab-icon">📸</span><span>相簿</span></button><button class="tab-item" onclick="showJoinForm()"><span class="tab-icon">📝</span><span>入會</span></button></div>
 </div>
 <script>
 var API='/api';
@@ -98,7 +98,7 @@ var meeting=null,members=[],guests=[],checked=[],locked=false,last=null,searchQ=
 
 var D={
   lunchFee:'388',paymeLink:'https://payme.hsbc/fotan',
-  wcLink:'https://pay.weixin.qq.com/',aliLink:'https://www.alipayhk.com/',fpsPhone:'97188675',aliQrImg:'',fpsQrImg:'',
+  wcLink:'https://pay.weixin.qq.com/',aliLink:'https://www.alipayhk.com/',fpsPhone:'97188675',fpsId:'125058909',aliQrImg:'',fpsQrImg:'',
   productIntro:'',gameInfo:'',albumLink:'',aboutUs:'',joinLink:'',skipCheckin:'1',
   schedule:'12:30 報到及交流\n12:45 例會正式開始\n13:00 會員介紹 (30秒每位)\n13:20 專題分享\n13:40 來賓介紹\n14:00 商業引薦\n14:30 午宴及自由交流\n15:00 活動結束',
   chairmanMsg:'感謝您今天蒞臨火炭會聚會！\n期待每個月也可以見面！'
@@ -451,6 +451,56 @@ function doCheckin(type,id,name){
   var newSeat=person2?person2.seat_order:null;
   var newPay=(type==='member')?'paid':'';
   return A('/attendance',{method:'POST',body:JSON.stringify({meeting_id:meeting.id,person_type:type,person_id:id,arrival_time:time,payment:newPay,table_number:newTbl,seat_order:newSeat})}).then(function(r){return{name:name,time:time,payment:newPay,attId:r.id,type:type,tbl:newTbl}});
+}
+
+function showJoinForm(){
+  var ov=document.createElement('div');ov.className='overlay';
+  ov.innerHTML='<div class="dbox" style="max-width:340px;max-height:90vh;overflow-y:auto;text-align:left"><div class="dn">📝 新會員入會表</div>'+
+    '<label style="display:block;font-size:12px;color:#64748b;margin-top:10px">姓名 *</label><input id="jf-name" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="中文或英文名稱">'+
+    '<label style="display:block;font-size:12px;color:#64748b">電話</label><input id="jf-tel" type="tel" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="9876 5432">'+
+    '<label style="display:block;font-size:12px;color:#64748b">電郵</label><input id="jf-email" type="email" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="name@example.com">'+
+    '<label style="display:block;font-size:12px;color:#64748b">專業領域</label><input id="jf-prof" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="例如：律師、室內設計、餐飲...">'+
+    '<label style="display:block;font-size:12px;color:#64748b">公司名稱</label><input id="jf-company" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="公司名（可選）">'+
+    '<label style="display:block;font-size:12px;color:#64748b">介紹人</label><input id="jf-inviter" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="誰介紹你來？">'+
+    '<div id="jf-msg" style="font-size:12px;text-align:center;margin:8px 0;display:none"></div>'+
+    '<button class="btn-yes" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer" onclick="submitJoinForm()">提交申請</button>'+
+    '<button class="btn-no" style="width:100%;padding:10px;margin-top:6px;border-radius:8px;border:none;font-size:13px;cursor:pointer" onclick="this.closest('.overlay').remove()">取消</button></div>';
+  ov.addEventListener('click',function(e){if(e.target===ov)ov.remove()});
+  document.body.appendChild(ov);
+}
+
+function submitJoinForm(){
+  var name=document.getElementById('jf-name').value.trim();
+  if(!name){document.getElementById('jf-msg').textContent='請填寫姓名';document.getElementById('jf-msg').style.display='block';document.getElementById('jf-msg').style.color='#ef4444';return}
+  var btn=document.querySelector('#jf-msg + button');
+  btn.disabled=true;btn.textContent='提交中...';
+  var body={
+    name:name,
+    tel:document.getElementById('jf-tel').value.trim(),
+    email:document.getElementById('jf-email').value.trim(),
+    professional:document.getElementById('jf-prof').value.trim(),
+    invited_by:document.getElementById('jf-inviter').value.trim()
+  };
+  var company=document.getElementById('jf-company').value.trim();
+  // Save to member via API
+  fetch('/api/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.error){
+        document.getElementById('jf-msg').textContent=d.error;
+        document.getElementById('jf-msg').style.color='#ef4444';
+        btn.disabled=false;btn.textContent='提交申請';
+      }else{
+        document.getElementById('jf-msg').innerHTML='<span style="color:#10b981;font-weight:700">✅ 申請已提交！</span><br><span style="font-size:11px;color:#64748b">謝謝你嘅申請，我哋會盡快聯絡你。</span>';
+        document.getElementById('jf-msg').style.display='block';
+        btn.style.display='none';
+        document.querySelector('#jf-msg + button + button').textContent='關閉';
+      }
+    }).catch(function(e){
+      document.getElementById('jf-msg').textContent='網絡錯誤，請重試';
+      document.getElementById('jf-msg').style.color='#ef4444';
+      btn.disabled=false;btn.textContent='提交申請';
+    });
 }
 
 function showAlipayQR(fee){

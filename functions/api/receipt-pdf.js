@@ -58,7 +58,7 @@ export async function onRequest(context) {
     // ── Load font ──
     let font, helvetica;
     try {
-      const fontData = await loadChineseFont();
+      const fontData = await loadChineseFont(env);
       font = await doc.embedFont(fontData);
     } catch (e) { /* fallback */ }
     helvetica = await doc.embedFont(StandardFonts.Helvetica);

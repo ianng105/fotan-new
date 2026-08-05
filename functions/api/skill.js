@@ -1005,7 +1005,7 @@ export async function onRequest(context) {
         doc.registerFontkit(fontkit);
 
         let chFont = null;
-        try { const fd = await loadChineseFont(); chFont = await doc.embedFont(fd); } catch(e) {}
+        try { const fd = await loadChineseFont(env); chFont = await doc.embedFont(fd); } catch(e) {}
         const F = chFont;
 
         // Try to load background PNG template from R2

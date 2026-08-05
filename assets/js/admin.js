@@ -2193,6 +2193,7 @@ async function renderSettingsPage(pc) {
   });
 
   pc.innerHTML = '<div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between"><h2 style="font-size:20px;font-weight:700">⚙️ 系統設定</h2><button class="btn btn-primary" onclick="saveSettings()">💾 儲存全部設定</button></div>' + html +
+    '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🧾</span> 收據編號管理</div><div class="settings-section-body" style="padding:16px"><p style="font-size:12px;color:var(--text2);margin-bottom:8px">會計師每次提供 500 個編號，系統自動遞增。用晒再入新起始編號。</p><div style="display:flex;gap:8px;align-items:flex-end"><div style="flex:1"><label style="font-size:11px;color:var(--text2)">下個收據編號（例：0000101）</label><input type="text" id="set-receipt-counter" placeholder="0000101" style="width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none" value="'+esc(settings.receipt_counter||'101')+'"></div><button class="btn btn-primary" onclick="saveReceiptCounter()">設定起始編號</button></div><p id="rc-msg" style="font-size:11px;margin-top:6px;display:none"></p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🤖</span> Telegram Bot 設定</div><div class="settings-section-body" style="padding:16px;text-align:center"><p style="font-size:13px;color:var(--text2);margin-bottom:8px">Bot: @fotanbot · 收發訊息 + R2 檔案上傳</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=setup\').then(r=>r.json()).then(d=>toast(d.ok?\'Webhook 已設定！\':\'失敗：\'+d.description))">🔗 設定 Webhook</button><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=info\').then(r=>r.json()).then(d=>toast(JSON.stringify(d.result||d)))">ℹ️ Webhook 狀態</button><button class="btn btn-sm btn-outline" onclick="fetch(\'/api/telegram?action=delete\').then(r=>r.json()).then(d=>toast(d.ok?\'Webhook 已刪除\':\'失敗\'))">🗑️ 刪除 Webhook</button></div><p style="font-size:11px;color:var(--text2);margin-top:8px">Webhook URL: https://fotan.techforliving.net/api/telegram</p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">🔐</span> 修改管理密碼</div><div class="settings-section-body" style="padding:16px"><div style="display:flex;gap:8px;align-items:flex-end"><input type="password" id="set-old-pwd" placeholder="舊密碼" style="flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none"><input type="password" id="set-new-pwd" placeholder="新密碼" style="flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none"><button class="btn btn-primary" onclick="changePassword()">確認修改</button></div><p id="pwd-msg" style="font-size:11px;margin-top:6px;display:none"></p></div></div>'+
     '<div class="settings-section"><div class="settings-section-hdr"><span class="settings-section-icon">💿</span> 資料庫備份</div><div class="settings-section-body" style="padding:16px;text-align:center"><p style="font-size:13px;color:var(--text2);margin-bottom:12px">下載所有資料表（members, guests, meetings, attendance, settings, receipts）為 JSON 檔案</p><button class="btn btn-primary" onclick="window.open(\'/api/backup\')">📥 下載備份 JSON</button></div></div>';
@@ -2761,6 +2762,17 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
 }
 
+async function saveReceiptCounter() {
+  var el = document.getElementById('set-receipt-counter');
+  var num = parseInt(el.value.replace(/^0+/,'') || '0', 10);
+  if (num < 1) { document.getElementById('rc-msg').textContent = '請輸入有效數字'; document.getElementById('rc-msg').style.display = 'block'; return }
+  var padded = String(num).padStart(7, '0');
+  await api('/settings', { method: 'PUT', body: JSON.stringify({ receipt_counter: padded }) });
+  document.getElementById('rc-msg').textContent = '✅ 下個收據編號設為：' + padded;
+  document.getElementById('rc-msg').style.color = '#10b981';
+  document.getElementById('rc-msg').style.display = 'block';
+  el.value = padded;
+}
 async function changePassword() {
   const pwd = document.getElementById('set-new-pwd').value.trim();
   const msg = document.getElementById('pwd-msg');
@@ -2918,7 +2930,11 @@ function formatFileSize(bytes) {
 async function renderWaCertPage(pc) {
   pc.innerHTML = `<h2 style="font-size:20px;font-weight:700;margin-bottom:16px">💰 入錢憑證</h2>
     <div class="panel">
-      <div class="panel-header"><h2>📋 已上傳憑證</h2></div>
+      <div class="panel-header"><h2>📋 已上傳憑證</h2>
+        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:11px;padding:4px 10px" onclick="bulkPrintReceipts()">🧾 批次出收據</button>
+        <select id="wacert-meeting-filter" onchange="loadWaCerts()" style="padding:5px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+          <option value="">📋 全部聚會</option>
+        </select></div>
       <div class="panel-body" style="padding:0">
         <table class="data-table">
           <thead><tr><th>縮圖</th><th>來自那個WhatsApp</th><th>關聯的嘉賓</th><th>相片備註</th><th>日期</th><th></th></tr></thead>
@@ -2927,11 +2943,26 @@ async function renderWaCertPage(pc) {
       </div>
     </div>`;
   loadWaCerts();
+  // Populate meeting filter
+  try {
+    const mts = await api('/meetings');
+    const sel = document.getElementById('wacert-meeting-filter');
+    if (sel) {
+      mts.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.date + ' ' + mLblText(m.type);
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) {}
 }
 
 async function loadWaCerts() {
   try {
-    const rows = await fetch('/api/whatsapp-cert').then(r => r.json());
+    const mid = document.getElementById('wacert-meeting-filter')?.value || '';
+    const url = mid ? '/api/whatsapp-cert?meeting_id=' + mid : '/api/whatsapp-cert';
+    const rows = await fetch(url).then(r => r.json());
     const el = document.getElementById('wacert-list');
     if (!rows.length) { el.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text2)">暫無憑證</td></tr>'; return; }
     el.innerHTML = rows.map(r => `<tr>
@@ -2941,9 +2972,11 @@ async function loadWaCerts() {
       <td style="max-width:160px;white-space:pre-wrap;word-break:break-word;cursor:pointer" onclick="editCertComment(${r.id},'${esc(r.comment||'')}')" title="點擊修改備註">${esc(r.comment||'—')}</td>
       <td style="font-size:11px">${esc((r.created_at||'').substring(0,16))}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">檢視收據</button>
+        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt?id=${r.id}','_blank')">🧾 出收據</button>
+        <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">PDF版</button>
         ${r.person_name
-          ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>`
+          ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>
+             <button class="btn btn-sm" style="background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="markCommitteePaid(${r.id},'${esc(r.person_type||'')}',${r.person_id||0})" title="標記委員6個月已付">🏅6月</button>`
           : `<button class="btn btn-sm" style="background:#3b82f6;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="showLinkCertModal(${r.id})">關聯來賓</button>
              <button class="btn btn-danger btn-sm" onclick="deleteWaCert(${r.id})" style="font-size:10px;padding:2px 6px">刪除</button>`}
       </td>
@@ -2951,6 +2984,50 @@ async function loadWaCerts() {
   } catch(e) { document.getElementById('wacert-list').innerHTML = '<tr><td colspan="6">載入失敗</td></tr>'; }
 }
 
+async function markCommitteePaid(certId, personType, personId) {
+  if (!personId) return toast('請先關聯來賓');
+  if (!confirm('確定標記此委員已繳付 6 個月會費（$220×6=$1,320）？\n\n系統會自動標記未來 6 次會議為已付。')) return;
+  try {
+    // 1. Update cert amount to 1320
+    await fetch('/api/whatsapp-cert', {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id: certId, amount: 1320, note: '委員 6 個月會費 7-12月' })
+    });
+    // 2. Get upcoming meetings
+    var mts = await api('/meetings');
+    var upcoming = mts.filter(function(m){ return m.date >= '2026-07-01' && m.date <= '2026-12-31' && m.type === 'regular'; })
+      .sort(function(a,b){ return a.date.localeCompare(b.date); }).slice(0, 6);
+    // 3. Mark paid for each meeting
+    var done = 0;
+    for (var i = 0; i < upcoming.length; i++) {
+      var m = upcoming[i];
+      var attList = await api('/attendance?meeting_id=' + m.id);
+      var att = attList.find(function(a){ return a.person_type === personType && a.person_id === personId; });
+      if (att) {
+        await api('/attendance', { method: 'PUT', body: JSON.stringify({ id: att.id, payment: 'paid' }) });
+        done++;
+      }
+    }
+    toast('✅ 已標記委員 6 個月會費 ($1,320) — ' + done + ' 場會議已付');
+    loadWaCerts();
+  } catch(e) { toast('失敗: ' + e.message); }
+}
+function bulkPrintReceipts() {
+  // Get all linked cert IDs from the current table
+  var rows = document.querySelectorAll('#wacert-list tr');
+  var ids = [];
+  rows.forEach(function(row) {
+    var btn = row.querySelector('button[onclick*="unlinkWaCert"]');
+    if (btn) {
+      var onclick = btn.getAttribute('onclick') || '';
+      var match = onclick.match(/unlinkWaCert\((\d+)\)/);
+      if (match) ids.push(match[1]);
+    }
+  });
+  if (!ids.length) return toast('暫無已關聯嘅憑證');
+  if (!confirm('確定為 ' + ids.length + ' 位已關聯人士批次出收據？')) return;
+  window.open('/api/receipt?ids=' + ids.join(','), '_blank');
+}
 function deleteWaCert(id) {
   if (!confirm('確定刪除此憑證？')) return;
   fetch('/api/whatsapp-cert?id='+id, { method: 'DELETE' }).then(r => r.json()).then(d => {

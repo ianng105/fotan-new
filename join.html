@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0d9488">
+  <title>火炭會 — 入會申請</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(180deg, #0d9488 0%, #0f766e 200px, #f0fdfa 200px);
+      min-height: 100vh;
+      color: #0f172a;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .container { max-width: 420px; margin: 0 auto; padding: 0 20px 40px; }
+    
+    .header {
+      text-align: center;
+      padding: 32px 0 24px;
+      color: #fff;
+    }
+    .header .icon { font-size: 48px; margin-bottom: 8px; }
+    .header h1 { font-size: 22px; font-weight: 700; }
+    .header p { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+    
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 24px 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+    
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+    .field label .req { color: #ef4444; }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 10px;
+      font-size: 16px;
+      font-family: inherit;
+      color: #0f172a;
+      background: #f8fafc;
+      outline: none;
+      transition: border-color 0.2s;
+      -webkit-appearance: none;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      border-color: #0d9488;
+      background: #fff;
+    }
+    .field textarea { height: 80px; resize: vertical; }
+    
+    .btn-submit {
+      width: 100%;
+      padding: 15px;
+      background: #0d9488;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.15s;
+    }
+    .btn-submit:active { background: #0f766e; }
+    .btn-submit:disabled { opacity: 0.6; }
+    
+    .msg {
+      text-align: center;
+      font-size: 14px;
+      padding: 12px;
+      border-radius: 10px;
+      margin-top: 12px;
+      display: none;
+    }
+    .msg.success { background: #d1fae5; color: #065f46; display: block; }
+    .msg.error { background: #fee2e2; color: #991b1b; display: block; }
+    
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .feature {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    .feature .ficon { font-size: 28px; margin-bottom: 4px; }
+    .feature .ftitle { font-size: 13px; font-weight: 600; color: #0f172a; }
+    .feature .fdesc { font-size: 11px; color: #64748b; margin-top: 2px; }
+    
+    .footer {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    .footer a { color: #0d9488; text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="icon">🔥</div>
+    <h1>火炭會聚會</h1>
+    <p>歡迎加入火炭商務協會</p>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label>姓名 <span class="req">*</span></label>
+      <input type="text" id="name" placeholder="中文或英文全名" autocomplete="name">
+    </div>
+    <div class="field">
+      <label>電話 <span class="req">*</span></label>
+      <input type="tel" id="tel" placeholder="9876 5432" autocomplete="tel">
+    </div>
+    <div class="field">
+      <label>電郵</label>
+      <input type="email" id="email" placeholder="name@example.com" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>公司名稱 / 專業領域 <span class="req">*</span></label>
+      <input type="text" id="professional" placeholder="例如：律師、室內設計、餐飲...">
+    </div>
+    <div class="field">
+      <label>介紹人</label>
+      <input type="text" id="inviter" placeholder="誰介紹你來？">
+    </div>
+    <div class="field">
+      <label>備註</label>
+      <textarea id="note" placeholder="任何想講嘅嘢（可選）"></textarea>
+    </div>
+
+    <button class="btn-submit" onclick="submitForm()">📝 提交入會申請</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <div class="ficon">🤝</div>
+      <div class="ftitle">商業引薦</div>
+      <div class="fdesc">擴展專業人脈</div>
+    </div>
+    <div class="feature">
+      <div class="ficon">🍽️</div>
+      <div class="ftitle">定期例會</div>
+      <div class="fdesc">每週午餐聚會</div>
+    </div>
+    <div class="feature">
+      <div class="ficon">💼</div>
+      <div class="ftitle">行業多元</div>
+      <div class="fdesc">50+ 專業領域</div>
+    </div>
+    <div class="feature">
+      <div class="ficon">📈</div>
+      <div class="ftitle">生意增長</div>
+      <div class="fdesc">互相引薦合作</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    火炭商務協會有限公司<br>
+    FOTAN BUSINESS ASSOCIATION LIMITED<br>
+    沙田火炭穗禾路1號豐利工業中心地下3B舖<br>
+    <a href="https://fotan.techforliving.net">fotan.techforliving.net</a>
+  </div>
+</div>
+
+<script>
+async function submitForm() {
+  var msg = document.getElementById('msg');
+  var btn = document.querySelector('.btn-submit');
+  
+  var name = document.getElementById('name').value.trim();
+  var tel = document.getElementById('tel').value.trim();
+  var professional = document.getElementById('professional').value.trim();
+  
+  if (!name) { msg.className = 'msg error'; msg.textContent = '請填寫姓名'; return; }
+  if (!tel) { msg.className = 'msg error'; msg.textContent = '請填寫電話'; return; }
+  if (!professional) { msg.className = 'msg error'; msg.textContent = '請填寫公司或專業領域'; return; }
+  
+  btn.disabled = true;
+  btn.textContent = '提交中...';
+  msg.className = 'msg';
+  msg.textContent = '';
+  
+  try {
+    var body = {
+      name: name,
+      tel: tel,
+      email: document.getElementById('email').value.trim(),
+      professional: professional
+    };
+    var inviter = document.getElementById('inviter').value.trim();
+    var note = document.getElementById('note').value.trim();
+    if (inviter || note) body.bio = (inviter ? '介紹人：' + inviter : '') + (note ? (inviter ? ' | ' : '') + note : '');
+    
+    var resp = await fetch('/api/members', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    var data = await resp.json();
+    
+    if (data.error) {
+      msg.className = 'msg error';
+      msg.textContent = data.error;
+      btn.disabled = false;
+      btn.textContent = '📝 提交入會申請';
+    } else {
+      msg.className = 'msg success';
+      msg.innerHTML = '✅ 申請已成功提交！<br><br>歡迎加入火炭會 🎉<br>我哋會盡快聯絡你。<br><br>如有查詢請 WhatsApp<br><a href="https://wa.me/85297188675" style="color:#25d366;font-weight:700">9718 8675</a>';
+      btn.style.display = 'none';
+    }
+  } catch(e) {
+    msg.className = 'msg error';
+    msg.textContent = '網絡錯誤，請重試';
+    btn.disabled = false;
+    btn.textContent = '📝 提交入會申請';
+  }
+}
+</script>
+</body>
+</html>

@@ -35,7 +35,7 @@ export function getTools() {
     { type: 'function', function: { name: 'list_all_guests', description: '列出所有活躍來賓', parameters: { type: 'object', properties: {}, required: [] } } },
     { type: 'function', function: { name: 'update_settings', description: '更新系統設定', parameters: { type: 'object', properties: { settings: { type: 'object', description: 'key-value 設定對照表' } }, required: ['settings'] } } },
     { type: 'function', function: { name: 'delete_meeting', description: '刪除會議及其所有出席記錄', parameters: { type: 'object', properties: { meeting_id: { type: 'integer' } }, required: ['meeting_id'] } } },
-    { type: 'function', function: { name: 'generate_receipt', description: '收到付款資料後生成正式PDF收據並查詢付款人身份。當用戶提供姓名/電話/金額/日期等付款資訊，或說「出收據/開收據/整收據/paid/付款/generate receipt」時，必須使用此工具。一併處理：生成PDF+查詢資料庫匹配。', parameters: { type: 'object', properties: { name: { type: 'string', description: '付款人姓名' }, amount: { type: 'integer', description: '付款金額(HK$)' }, phone: { type: 'string', description: '電話號碼（可選）' }, date: { type: 'string', description: '日期（可選）例如 2026年7月15日' }, event: { type: 'string', description: '活動/事由名稱，填喺 Being in payment 行（可選）例如 四週年聚餐' }, text: { type: 'string', description: '用戶原始輸入的全部文字' } }, required: [] } } }
+    { type: 'function', function: { name: 'generate_receipt', description: '收到付款資料後生成正式PDF收據並查詢付款人身份。當用戶提供姓名/電話/金額/日期等付款資訊，或說「出收據/開收據/整收據/paid/付款/generate receipt」時，必須使用此工具。一併處理：生成PDF+查詢資料庫匹配。', parameters: { type: 'object', properties: { name: { type: 'string', description: '付款人姓名' }, amount: { type: 'integer', description: '付款金額(HK$)' }, phone: { type: 'string', description: '電話號碼（可選）' }, date: { type: 'string', description: '日期（可選）例如 2026年7月15日' }, event: { type: 'string', description: '活動/事由名稱（可選）例如 四週年聚餐、例會' }, payment_method: { type: 'string', description: '付款方式：cash/FPS/PayMe/cheque（可選）' }, text: { type: 'string', description: '用戶原始輸入的全部文字' } }, required: [] } } }
   ];
 }
 
@@ -580,33 +580,78 @@ export async function executeFunction(env, name, args) {
       return JSON.stringify({ ok: true, message: '已刪除會議 #' + args.meeting_id });
     }
     case 'generate_receipt': {
-      let { name, amount, phone, date, event, text } = args;
+      // ── Direct HTML template fill — only name required ──
+      let { name, amount, phone, date, event, text, payment_method } = args;
       // Parse from natural language text if fields not explicitly provided
-      if (text && (!name || !amount)) {
-        // Pattern 1: "Name paid amount" or "Name 已付 amount"
+      if (text && !name) {
         let m = text.match(/(.+?)\s*(?:paid|已付|付款)\s*\$?(\d+)/i);
-        // Pattern 2: "Name phone date amount元" (Cantonese style)
         if (!m) m = text.match(/(\S+)\s+(\d{8})\s+(\d{1,2}月\d{1,2})\s+(\d+)\s*元?/);
-        // Pattern 3: any name followed by a dollar amount
         if (!m) m = text.match(/(.+?)\s+(\d+)\s*元?\s*$/);
+        if (!m) m = text.match(/^(.+?)\s*$/);
         if (m) {
           name = name || m[1].trim();
           if (!amount && m.length > 2) amount = parseInt(m[m.length-1].match(/\d+/)?.[0] || m[2]);
           if (!phone && text.match(/(\d{8})/)) phone = RegExp.$1;
         }
       }
-      if (!name) return JSON.stringify({ error: '請提供付款人姓名，例如：陳大文 paid 398 或 陳大文 91234567 7月15 280元' });
-      if (!amount || isNaN(amount)) return JSON.stringify({ error: '請提供有效付款金額' });
+      // Detect payment method from text (only if not already provided as direct arg)
+      if (!payment_method && text) {
+        if (text.match(/現金|cash/i)) payment_method = 'cash';
+        else if (text.match(/payme/i)) payment_method = 'PayMe';
+        else if (text.match(/fps|轉數快/i)) payment_method = 'FPS';
+        else if (text.match(/支票|cheque|check/i)) payment_method = 'cheque';
+      }
+      // Extract cheque details if payment method is cheque
+      let chequeNo = args.chequeNo || '';
+      let bankName = args.bankName || '';
+      if (text && payment_method === 'cheque') {
+        if (!chequeNo) {
+          const cnMatch = text.match(/(?:支票號碼|Cheque\s*NO?[.:]?|支票\s*NO?[.:]?)\s*[:#]?\s*(\d+)/i);
+          if (cnMatch) chequeNo = cnMatch[1];
+        }
+        if (!bankName) {
+          const bnMatch = text.match(/(?:付款銀行|Bank|銀行)\s*[:.]?\s*(.+?)(?:\s*$|\s*\n)/i);
+          if (bnMatch) bankName = bnMatch[1].trim();
+        }
+      }
+      // Auto-generate receipt number from counter (args.receipt_no can override)
+      let receipt_no = args.receipt_no || await getNextReceiptNumber(env);
+      if (!name) return JSON.stringify({ error: '請提供付款人姓名，例如：陳大文' });
 
       try {
-        // Generate receipt directly using the same logic as skill.js (no external HTTP call)
-        const r2Key = await generateReceiptDirect(env, name, amount, phone || '', date || '', event || '');
-        if (!r2Key) return JSON.stringify({ error: '收據PDF生成失敗' });
+        const templateHtml = await getHtmlTemplate(env);
+        if (!templateHtml) return JSON.stringify({ error: 'HTML receipt template not available' });
+
+        let dd = '', mm = '', yyyy = '';
+        if (date) {
+          const d = parseDate(date) || date;
+          const parts = String(d).split('-');
+          if (parts.length === 3) { yyyy = parts[0]; mm = parts[1]; dd = parts[2]; }
+          else { dd = String(d).substring(0, 10); }
+        }
+
+        const filledHtml = fillReceiptHtml(templateHtml, {
+          name: name || '',
+          dd, mm, yyyy,
+          amount: String(amount || ''),
+          event: event || '',
+          receiptNo: receipt_no,
+          paymentMethod: payment_method || '',
+          chequeNo, bankName
+        });
+
+        // Convert filled HTML to PDF via local pdf-worker
+        const pdfBytes = await convertHtmlToPdf(filledHtml);
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 3000?' });
+
+        const r2Key = 'receipts/receipt-' + receipt_no + '.pdf';
+        await env.R2.put(r2Key, pdfBytes, {
+          httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' }
+        });
 
         const downloadUrl = '/api/image?name=' + encodeURIComponent(r2Key) + '&download=1';
-        const receiptNum = r2Key.match(/receipt-(\d+)/)?.[1] || '';
+        const methodLabel = payment_method === 'cash' ? '💵現金' : (payment_method === 'PayMe' ? '💳PayMe' : (payment_method === 'FPS' ? '🔁FPS轉數快' : (payment_method === 'cheque' ? '📝支票' : (payment_method || ''))));
 
-        // Also auto-lookup the person for the admin
         let lookupInfo = '';
         try {
           const lr = JSON.parse(await executeFunction(env, 'lookup_payer', { search_name: name, search_tel: phone || '', amount }));
@@ -618,13 +663,99 @@ export async function executeFunction(env, name, args) {
 
         return JSON.stringify({
           ok: true,
-          receipt_number: receiptNum,
-          name, amount, phone: phone || '', date: date || '',
+          name, amount, payment_method,
+          receipt_no: receipt_no,
           download_url: downloadUrl,
-          message: '🧾 收據已生成！#' + receiptNum + ' — ' + name + ' HK$' + amount + lookupInfo + '\n📥 ' + downloadUrl
+          message: '🧾 收據已生成！#' + receipt_no + ' — ' + name + (amount ? ' 港幣$' + amount : '') + (methodLabel ? '｜' + methodLabel : '') + lookupInfo + '\n📥 ' + downloadUrl
         });
       } catch (e) {
         return JSON.stringify({ error: '收據生成失敗：' + e.message });
+      }
+    }
+    case 'generate_receipt_image': {
+      // ── Direct HTML template fill (AI填表) — only name required ──
+      let { name: name2, amount: amount2, date: date2, event: event2, payment_method, receipt_no, text: text2 } = args;
+      if (text2 && !name2) {
+        let m = text2.match(/(.+?)\s*(?:paid|已付|付款)\s*\$?(\d+)/i);
+        if (!m) m = text2.match(/(\S+)\s+(\d{8})\s+(\d{1,2}月\d{1,2})\s+(\d+)\s*元?/);
+        if (!m) m = text2.match(/(.+?)\s+(\d+)\s*元?\s*$/);
+        if (!m) m = text2.match(/^(.+?)\s*$/);
+        if (m) {
+          name2 = name2 || m[1].trim();
+          if (!amount2 && m.length > 2) amount2 = parseInt(m[m.length-1].match(/\d+/)?.[0] || m[2]);
+          if (!payment_method && text2.match(/現金|cash/i)) payment_method = 'cash';
+          if (!payment_method && text2.match(/payme/i)) payment_method = 'PayMe';
+          if (!payment_method && text2.match(/fps|轉數快/i)) payment_method = 'FPS';
+        }
+      }
+      if (text2) {
+        if (!payment_method && text2.match(/payme/i)) payment_method = 'PayMe';
+        if (!payment_method && text2.match(/fps|轉數快/i)) payment_method = 'FPS';
+        if (!payment_method && text2.match(/現金|cash/i)) payment_method = 'cash';
+        if (!payment_method && text2.match(/支票|cheque|check/i)) payment_method = 'cheque';
+      }
+      // Extract cheque details if payment method is cheque
+      let chequeNo2 = args.chequeNo || '';
+      let bankName2 = args.bankName || '';
+      if (text2 && payment_method === 'cheque') {
+        if (!chequeNo2) {
+          const cnMatch = text2.match(/(?:支票號碼|Cheque\s*NO?[.:]?|支票\s*NO?[.:]?)\s*[:#]?\s*(\d+)/i);
+          if (cnMatch) chequeNo2 = cnMatch[1];
+        }
+        if (!bankName2) {
+          const bnMatch = text2.match(/(?:付款銀行|Bank|銀行)\s*[:.]?\s*(.+?)(?:\s*$|\s*\n)/i);
+          if (bnMatch) bankName2 = bnMatch[1].trim();
+        }
+      }
+      // Auto-generate receipt number from counter (args.receipt_no can override)
+      if (!receipt_no) receipt_no = await getNextReceiptNumber(env);
+      if (!name2) {
+        return JSON.stringify({ error: '請提供付款人姓名。例如：AI填表 Ada Cheung' });
+      }
+      try {
+        const templateHtml = await getHtmlTemplate(env);
+        if (!templateHtml) return JSON.stringify({ error: 'HTML receipt template not available' });
+
+        let dd = '', mm = '', yyyy = '';
+        if (date2) {
+          const d = parseDate(date2) || date2;
+          const parts = String(d).split('-');
+          if (parts.length === 3) { yyyy = parts[0]; mm = parts[1]; dd = parts[2]; }
+          else { dd = String(d).substring(0, 10); }
+        }
+
+        const filledHtml = fillReceiptHtml(templateHtml, {
+          name: name2 || '',
+          dd, mm, yyyy,
+          amount: String(amount2 || ''),
+          event: event2 || '',
+          receiptNo: receipt_no || '',
+          paymentMethod: payment_method || '',
+          chequeNo: chequeNo2, bankName: bankName2
+        });
+
+        // Convert filled HTML to PDF via local pdf-worker
+        const pdfBytes = await convertHtmlToPdf(filledHtml);
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 8080?' });
+
+        const r2Key = 'receipts/receipt-' + (receipt_no || Date.now()) + '.pdf';
+        await env.R2.put(r2Key, pdfBytes, {
+          httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' }
+        });
+
+        const downloadUrl = '/api/image?name=' + encodeURIComponent(r2Key) + '&download=1';
+        const pmLower = (payment_method || '').toLowerCase();
+        const methodLabel = pmLower === 'cash' ? '💵現金' : (pmLower === 'payme' ? '💳PayMe' : (pmLower === 'fps' ? '🔁FPS轉數快' : (pmLower === 'cheque' ? '📝支票' : (payment_method || 'FPS/PayMe'))));
+        return JSON.stringify({
+          ok: true,
+          name: name2, amount: amount2,
+          payment_method: payment_method || '',
+          receipt_no: receipt_no || '',
+          download_url: downloadUrl,
+          message: '🖼️ AI填表收據已生成！#' + (receipt_no || '') + ' — ' + name2 + (amount2 ? ' 港幣$' + amount2 : '') + '｜' + methodLabel + '\n📥 ' + downloadUrl
+        });
+      } catch (e) {
+        return JSON.stringify({ error: 'AI填表收據生成失敗：' + e.message });
       }
     }
     case 'lookup_payer': {
@@ -744,17 +875,24 @@ const TPL = {
 function tplX(px) { return px * (595.28 / TPL.W); }
 function tplY(py) { return 841.89 - py * (841.89 / TPL.H); }
 
+// ── Receipt counter: 0000151–0000200, wraps back to 151 ──
+async function getNextReceiptNumber(env) {
+  let counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
+  let counter = counterRow ? parseInt(counterRow.value) : 151;
+  if (isNaN(counter) || counter < 151 || counter > 200) counter = 151;
+  const receiptNum = String(counter).padStart(7, '0');
+  // Increment and save (wrap at 200 → 151)
+  const nextCounter = counter >= 200 ? 151 : counter + 1;
+  await env.DB.prepare(
+    "INSERT INTO settings (key, value) VALUES ('receipt_counter', ?) ON CONFLICT(key) DO UPDATE SET value = ?"
+  ).bind(String(nextCounter), String(nextCounter)).run();
+  return receiptNum;
+}
+
 async function generateReceiptDirect(env, name, amount, phone, date, event) {
   try {
-    let counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
-    let counter = counterRow ? parseInt(counterRow.value) : 151;
-    if (isNaN(counter) || counter < 151 || counter > 200) counter = 151;
-    const receiptNum = String(counter).padStart(7, '0');
+    const receiptNum = await getNextReceiptNumber(env);
     const issueDate = date || new Date().toISOString().split('T')[0];
-    const nextCounter = counter >= 200 ? 151 : counter + 1;
-    await env.DB.prepare(
-      "INSERT INTO settings (key, value) VALUES ('receipt_counter', ?) ON CONFLICT(key) DO UPDATE SET value = ?"
-    ).bind(String(nextCounter), String(nextCounter)).run();
 
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib');
     const { default: fontkit } = await import('@pdf-lib/fontkit');
@@ -862,25 +1000,170 @@ async function getBackgroundImage(env) {
   } catch (e) { console.error('getBackgroundImage error:', e.message); return null; }
 }
 
+// ── Fetch HTML receipt template from R2 ──
+async function getHtmlTemplate(env) {
+  const R2_KEY = 'templates/fotanclub07.html';
+  const LOCAL_FILE = 'fotanclub07.html';
+  try {
+    const obj = await env.R2.get(R2_KEY);
+    if (obj) return new TextDecoder().decode(await obj.arrayBuffer());
+    for (const port of [8788, 8787, 8789, 8790]) {
+      try {
+        const staticUrl = 'http://127.0.0.1:' + port + '/' + encodeURIComponent(LOCAL_FILE);
+        const resp = await fetch(staticUrl);
+        if (resp.ok) {
+          const htmlText = await resp.text();
+          await env.R2.put(R2_KEY, htmlText, {
+            httpMetadata: { contentType: 'text/html; charset=utf-8', cacheControl: 'public, max-age=86400' }
+          });
+          return htmlText;
+        }
+      } catch (fetchErr) { /* try next port */ }
+    }
+    return null;
+  } catch (e) { console.error('getHtmlTemplate error:', e.message); return null; }
+}
+
+// ── Convert filled HTML to PDF via local pdf-worker ──
+async function convertHtmlToPdf(html) {
+  const PDF_WORKER_URL = 'http://127.0.0.1:8080';
+  try {
+    const resp = await fetch(PDF_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'PDF worker returned ' + resp.status);
+    }
+    return new Uint8Array(await resp.arrayBuffer());
+  } catch (e) {
+    console.error('convertHtmlToPdf error:', e.message);
+    return null;
+  }
+}
+
+// ── Parse natural language date strings ──
+function parseDate(text) {
+  if (!text) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const s = String(text).trim();
+  let m = s.match(/(\d+)(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*,?\s*(\d{4})?/i);
+  if (m) {
+    const months = {january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+    const dd = String(parseInt(m[1])).padStart(2,'0');
+    const mm = String(months[(m[2] || '').toLowerCase()] || 1).padStart(2,'0');
+    const yyyy = m[3] || String(new Date().getFullYear());
+    return yyyy + '-' + mm + '-' + dd;
+  }
+  m = s.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]/);
+  if (m) {
+    const mm = String(parseInt(m[1])).padStart(2,'0');
+    const dd = String(parseInt(m[2])).padStart(2,'0');
+    return (new Date().getFullYear()) + '-' + mm + '-' + dd;
+  }
+  m = s.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (m) return m[3] + '-' + String(parseInt(m[2])).padStart(2,'0') + '-' + String(parseInt(m[1])).padStart(2,'0');
+  return null;
+}
+
+// ── Fill HTML receipt template with data ──
+function fillReceiptHtml(templateHtml, data) {
+  let html = templateHtml;
+
+  // Payee name — replace "茲收到: Payee" with "茲收到: <name>"
+  if (data.name) {
+    html = html.replace('茲收到: Payee', '茲收到: ' + data.name);
+  }
+
+  // Date: dd, mm, yyyy — targeted by span class to avoid false matches
+  // dd is inside <span class="pdf24_12 pdf24_08 pdf24_17" ...>dd </span>
+  if (data.dd) html = html.replace('class="pdf24_12 pdf24_08 pdf24_17" style="word-spacing:0.5384em;">dd ', 'class="pdf24_12 pdf24_08 pdf24_17" style="word-spacing:0.5384em;">' + data.dd + ' ');
+  // mm is inside <span class="pdf24_12 pdf24_08 pdf24_16" ...>mm </span>
+  if (data.mm) html = html.replace('class="pdf24_12 pdf24_08 pdf24_16" style="word-spacing:0.5402em;">mm ', 'class="pdf24_12 pdf24_08 pdf24_16" style="word-spacing:0.5402em;">' + data.mm + ' ');
+  // yyyy is inside <span class="pdf24_12 pdf24_08 pdf24_18" ...>yyyy </span>
+  // Always fill yyyy: use provided year or current year
+  const yyyyVal = data.yyyy || String(new Date().getFullYear());
+  html = html.replace('class="pdf24_12 pdf24_08 pdf24_18" style="word-spacing:0.3169em;">yyyy ', 'class="pdf24_12 pdf24_08 pdf24_18" style="word-spacing:0.3169em;">' + yyyyVal + ' ');
+
+  // Time
+  const now = new Date();
+  const hh = data.timeHH || String(now.getHours()).padStart(2, '0');
+  const mmTime = data.timeMM || String(now.getMinutes()).padStart(2, '0');
+  html = html.replace('>XX ', '>' + hh + ' ');
+  html = html.replace('>ZZ ', '>' + mmTime + ' ');
+
+  // Amount — remove "A" prefix and replace mountOfMoney with 港幣$ amount
+  if (data.amount) {
+    const amtStr = '港幣$' + String(data.amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    // Remove the "A" prefix span before mountOfMoney
+    html = html.replace('class="pdf24_23 pdf24_24 pdf24_25">A</span><span class="pdf24_14 pdf24_15 pdf24_11">mountOfMoney', 'class="pdf24_23 pdf24_24 pdf24_25"></span><span class="pdf24_14 pdf24_15 pdf24_11">' + amtStr);
+  }
+
+  // Event
+  if (data.event) html = html.replace('EventName', data.event);
+
+  // Receipt number
+  // Receipt number — replace 0000101 in <span class="pdf24_07 pdf24_08 pdf24_09">
+  if (data.receiptNo) html = html.replace('class="pdf24_07 pdf24_08 pdf24_09">No:0000101', 'class="pdf24_07 pdf24_08 pdf24_09">No:' + data.receiptNo);
+
+  // Payment method checkbox — replace ☐ with ☑ in <span class="pdf24_30 pdf24_15 pdf24_27">
+  if (data.paymentMethod) {
+    const pm = data.paymentMethod.toLowerCase();
+    if (pm === 'cash') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27">☐</span><span class="pdf24_14 pdf24_15 pdf24_27">現金', 'class="pdf24_30 pdf24_15 pdf24_27">☑</span><span class="pdf24_14 pdf24_15 pdf24_27">現金');
+    else if (pm === 'fps') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27">☐</span><span class="pdf24_14 pdf24_15 pdf24_27">轉數快', 'class="pdf24_30 pdf24_15 pdf24_27">☑</span><span class="pdf24_14 pdf24_15 pdf24_27">轉數快');
+    else if (pm === 'payme') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27" style="word-spacing:0.3478em;">☐ </span><span class="pdf24_23 pdf24_24 pdf24_25">PayMe', 'class="pdf24_30 pdf24_15 pdf24_27" style="word-spacing:0.3478em;">☑ </span><span class="pdf24_23 pdf24_24 pdf24_25">PayMe');
+    else if (pm === 'cheque') html = html.replace('/Cheque NO.:', '/Cheque NO.: X');
+  }
+
+  // Cheque details — only fill when payment method is cheque, else remove placeholders
+  const isCheque = data.paymentMethod && data.paymentMethod.toLowerCase() === 'cheque';
+  if (isCheque) {
+    if (data.chequeNo) {
+      html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo', 'class="pdf24_33 pdf24_24 pdf24_34">' + data.chequeNo);
+    } else {
+      html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo &nbsp;', 'class="pdf24_33 pdf24_24 pdf24_34">');
+    }
+    if (data.bankName) {
+      html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName', 'class="pdf24_12 pdf24_08 pdf24_36">' + data.bankName);
+    } else {
+      html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName &nbsp;', 'class="pdf24_12 pdf24_08 pdf24_36">');
+    }
+  } else {
+    // Not paying by cheque — strip both cheque rows
+    html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo &nbsp;', 'class="pdf24_33 pdf24_24 pdf24_34">');
+    html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName &nbsp;', 'class="pdf24_12 pdf24_08 pdf24_36">');
+  }
+
+  return html;
+}
+
 export async function callQwen(env, messages, apiKey) {
-  // Detect if any message contains an image (content is array with image_url)
+  // Detect if any message contains an image
   const hasImage = messages.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'image_url'));
+  // Check if the latest user message has text content alongside the image
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const lastHasText = lastUserMsg && Array.isArray(lastUserMsg.content) && lastUserMsg.content.some(c => c.type === 'text' && c.text.trim());
+  // Only use VL-only JSON extraction when image is sent WITHOUT any text
+  const vlOnlyMode = hasImage && !lastHasText;
   const model = hasImage ? 'qwen-vl-plus' : 'qwen-plus';
 
   const systemMsg = { role: 'system', content: getSystemPrompt() };
-  // For VL model: first extract info from image, then auto-search
+  // VL-only: used when user sends a bare image with no text
   const vlSystemPrompt = `你是火炭會聚會助理龍蝦仔🦞。用戶發送了一張付款憑證截圖（PayMe/FPS/銀行轉帳）。
 
 請從圖片中提取以下資訊並以JSON格式回覆（只回覆JSON，不要其他文字）：
 {
   "payer_name": "付款人顯示的名稱（中英文皆可）",
   "phone": "電話號碼（如有）",
-  "amount": 金額數字,
+  "amount": 金額數字（只回數字，唔好有$或逗號）,
+  "date": "交易日期 YYYY-MM-DD（如有）",
   "bank": "付款銀行或平台（如有）",
   "note": "備註/參考號碼（如有）"
 }
 如果某欄位無法辨識，填null。`;
-  const allMsgs = hasImage
+  const allMsgs = vlOnlyMode
     ? [{ role: 'system', content: vlSystemPrompt }, ...messages]
     : [systemMsg, ...messages];
 
@@ -888,23 +1171,95 @@ export async function callQwen(env, messages, apiKey) {
   const payload = {
     model,
     messages: allMsgs,
-    tools: hasImage ? undefined : tools
+    tools: vlOnlyMode ? undefined : tools
   };
 
   if (!apiKey) return { reply: 'API key 未設定。' };
 
+  // ── Image + Text receipt flow: extract from image first, then generate receipt ──
+  if (hasImage && !vlOnlyMode) {
+    const userText = lastUserMsg.content.find(c => c.type === 'text');
+    const textContent = userText ? userText.text.trim() : '';
+    const isReceiptRequest = textContent && /出收據|開收據|整收據|收據|receipt|give me.*receipt|generate.*receipt|paid|付款/i.test(textContent);
+
+    if (isReceiptRequest) {
+      // Step 1: Call qwen-vl-plus to extract info from image as JSON
+      let extracted = null;
+      try {
+        const vlResp = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+          body: JSON.stringify({
+            model: 'qwen-vl-plus',
+            messages: [{ role: 'system', content: vlSystemPrompt }, ...messages]
+          })
+        });
+        const vlData = await vlResp.json();
+        const vlReply = vlData.choices?.[0]?.message?.content || '';
+        const jsonMatch = vlReply.match(/\{[\s\S]*"payer_name"[\s\S]*\}/);
+        if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
+        else {
+          const anyJson = vlReply.match(/\{[\s\S]*\}/);
+          if (anyJson) extracted = JSON.parse(anyJson[0]);
+        }
+      } catch (e) { /* extraction failed */ }
+
+      if (extracted && extracted.payer_name) {
+        // Step 2: Combine extracted info + user text → generate receipt
+        const name = extracted.payer_name;
+        const amount = extracted.amount ? parseInt(extracted.amount) : 0;
+        const date = extracted.date || '';
+        const phone = extracted.phone || '';
+
+        // Extract payment method and event from user text
+        let payment_method = '';
+        if (textContent.match(/現金|cash/i)) payment_method = 'cash';
+        else if (textContent.match(/payme/i)) payment_method = 'PayMe';
+        else if (textContent.match(/fps|轉數快/i)) payment_method = 'FPS';
+        else if (textContent.match(/支票|cheque|check/i)) payment_method = 'cheque';
+
+        let event = '';
+        const eventMatch = textContent.match(/(?:for|at|in|活動|聚餐)?\s*(例會|特別會議|週年聚餐|四週年聚餐)/i);
+        if (eventMatch) event = eventMatch[1];
+
+        const fnResult = await executeFunction(env, 'generate_receipt', {
+          name, amount, phone, date, event,
+          payment_method,
+          text: textContent
+        });
+        const result = JSON.parse(fnResult);
+
+        if (result.ok) {
+          // Build summary with extracted info
+          let summary = '📸 憑證分析結果：\n';
+          summary += '🏷️ 付款人：' + name + '\n';
+          if (amount) summary += '💰 金額：港幣$' + amount + '\n';
+          if (date) summary += '📅 日期：' + date + '\n';
+          if (payment_method) summary += '💳 付款方式：' + (payment_method === 'cash' ? '現金' : payment_method === 'FPS' ? 'FPS轉數快' : payment_method === 'PayMe' ? 'PayMe' : payment_method) + '\n';
+          if (event) summary += '🎉 活動：' + event + '\n';
+          summary += '\n' + result.message.replace(/📥\s*(\/api[^\s]+)/g, '📥 <a href="$1" target="_blank">撳呢度下載收據</a>');
+          return { reply: summary, tools_used: ['generate_receipt'] };
+        } else {
+          return { reply: '📸 已從圖片提取：' + name + (amount ? ' | 港幣$' + amount : '') + '\n但收據生成失敗：' + (result.error || '不明錯誤'), tools_used: [] };
+        }
+      } else {
+        return { reply: '📸 無法從圖片中辨識付款人資訊，請手動提供姓名同金額。', tools_used: [] };
+      }
+    }
+  }
+
   let msgs = [...messages];
   let data, choice;
   let toolsCalled = [];
-  const maxRounds = hasImage ? 1 : 3;
+  const maxRounds = vlOnlyMode ? 1 : 3;
 
   for (let round = 0; round < maxRounds; round++) {
     // Always include tools + system prompt in every round so the model
     // can chain tool calls and properly process results
     const pl = {
       model,
-      messages: [{ role: 'system', content: hasImage ? vlSystemPrompt : getSystemPrompt() }, ...msgs],
-      ...(hasImage ? {} : { tools })
+      messages: [{ role: 'system', content: vlOnlyMode ? vlSystemPrompt : getSystemPrompt() }, ...msgs],
+      ...(vlOnlyMode ? {} : { tools })
     };
     const resp = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
       method: 'POST',
@@ -932,8 +1287,8 @@ export async function callQwen(env, messages, apiKey) {
 
   let reply = data.choices?.[0]?.message?.content || '抱歉，我無法處理這個請求。';
 
-  // For VL image extraction: auto-search the database
-  if (hasImage && reply) {
+  // For VL-only image extraction: auto-search the database
+  if (vlOnlyMode && reply) {
     try {
       // Try to parse JSON from VL response
       let extracted = null;

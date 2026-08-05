@@ -27,9 +27,9 @@ export async function onRequest(context) {
       const body = await request.json();
       const { id, _delete } = body;
       if (!id) return Response.json({ error: 'ID required' }, { status: 400, headers: cors });
-      // Soft-delete via PUT (Cloudflare WAF 封鎖 DELETE method)
+      // Hard-delete via PUT (Cloudflare WAF 封鎖 DELETE method)
       if (_delete) {
-        await env.DB.prepare('UPDATE attendance SET arrival_time=NULL, table_number=NULL, seat_order=NULL, substitute=NULL, remark=NULL WHERE id=?').bind(id).run();
+        await env.DB.prepare("DELETE FROM attendance WHERE id=?").bind(id).run();
         return Response.json({ ok: true, deleted: true }, { headers: cors });
       }
       // Only update fields that are present in the request body
@@ -82,7 +82,7 @@ export async function onRequest(context) {
       const body = await request.json();
       const { id } = body;
       if (!id) return Response.json({ error: 'ID required' }, { status: 400, headers: cors });
-      await env.DB.prepare('UPDATE attendance SET arrival_time=NULL, table_number=NULL, seat_order=NULL, substitute=NULL, remark=NULL WHERE id=?').bind(id).run();
+      await env.DB.prepare("DELETE FROM attendance WHERE id=?").bind(id).run();
       return Response.json({ ok: true }, { headers: cors });
     }
   } catch (e) {

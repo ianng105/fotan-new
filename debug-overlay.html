@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html><body style="margin:0;position:relative">
+<img id="tpl" src="火炭會receipt_template.png" style="width:848px;height:1264px">
+<canvas id="c" style="position:absolute;left:0;top:0;pointer-events:none"></canvas>
+<script>
+const TPL = { W:848, H:1264, receiptNo:{x:580,y:110,size:8}, payerName:{x:280,y:420,size:11}, dateDD:{x:380,y:540,size:11}, dateMM:{x:460,y:540,size:11}, dateYYYY:{x:540,y:540,size:11}, amount:{x:420,y:680,size:11}, eventName:{x:280,y:830,size:11} };
+const c = document.getElementById('c');
+c.width = 848; c.height = 1264;
+const ctx = c.getContext('2d');
+// Draw markers for current coordinates
+const labels = {
+  receiptNo: 'receiptNo', payerName: 'payerName',
+  dateDD:'dateDD', dateMM:'dateMM', dateYYYY:'dateYYYY',
+  amount:'amount', eventName:'eventName'
+};
+for (const [k, v] of Object.entries(labels)) {
+  const p = TPL[k];
+  ctx.strokeStyle = 'red'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle = 'red'; ctx.font = '10px monospace';
+  ctx.fillText(k, p.x+12, p.y+4);
+  // draw crosshair
+  ctx.beginPath(); ctx.moveTo(p.x-15,p.y); ctx.lineTo(p.x+15,p.y);
+  ctx.moveTo(p.x,p.y-15); ctx.lineTo(p.x,p.y+15); ctx.stroke();
+}
+// Also draw horizontal lines found from analysis
+const hlines = [49,50,140,141,190,236,281,282,327,402,654,655];
+ctx.strokeStyle = 'rgba(0,255,0,0.5)'; ctx.lineWidth = 1;
+hlines.forEach(y => { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(848,y); ctx.stroke(); });
+</script></body></html>
