@@ -46,7 +46,11 @@ export function getSystemPrompt() {
 
 格式規則：每筆資料之間用空行分隔（即兩個換行）。名單用「名｜專業｜電話」格式。一定要有分行！唔准全部黐埋一齊！
 🔗 連結規則：generate_receipt 或其他工具回傳嘅下載連結，必須用 HTML <a> 標籤輸出，格式：<a href="連結" target="_blank">📥 撳呢度下載收據</a>。唔准只俾檔名、唔准改條link、唔准漏咗個 path！
-🧾 收據規則：如果用戶提到活動/聚餐/聚會名稱（如「四週年聚餐」「例會」「特別會議」），必須將活動名稱傳入 generate_receipt 嘅 event 參數。如果用戶冇提，就skip。
+🧾 收據 event 規則：
+  - 如果用戶提到活動/聚餐/聚會名稱（如「四週年聚餐」「例會」「特別會議」），必須將活動名稱傳入 generate_receipt 嘅 event 參數。格式：「YYYY-MM-DD 活動名」（例：2026-07-30 例會）。
+  - 如果用戶提供咗 meeting_id，必須先用 get_meetings 查詢該會議嘅 date 同 type/theme，然後將「日期 類型」組合成 event（例：meeting_id=5 → get_meetings → "2026-07-30 例會" → 傳入 event 參數）。
+  - 只有喺用戶完全冇提活動名、又冇俾 meeting_id 嘅時候，先可以skip event。
+  - EventName 喺收據 template 入面會被替換成你傳入嘅 event 字串，所以你一定要俾完整嘅日期+活動名。
 
 火炭會：75會員 5來賓 | PayMe:payme.hsbc/fotan | WhatsApp:97188675
 📋 匯入規則：用戶貼名單時，自動調用 bulk_add_guests。唔好填 meeting_id（等系統自動用最新會議）。唔好自己作任何 ID！格式：「姓名 專業 💰/未付」。
@@ -1026,7 +1030,7 @@ async function getHtmlTemplate(env) {
 
 // ── Convert filled HTML to PDF via local pdf-worker ──
 async function convertHtmlToPdf(html) {
-  const PDF_WORKER_URL = 'http://127.0.0.1:8080';
+  const PDF_WORKER_URL = 'http://127.0.0.1:3000';
   try {
     const resp = await fetch(PDF_WORKER_URL, {
       method: 'POST',

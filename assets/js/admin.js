@@ -14,8 +14,8 @@ let currentUserRole = 'admin'; // default, updated after auth check
 
 // Role permissions: which pages each role can access
 const ROLE_PERMISSIONS = {
-  admin:   ['overview','checkin','meetings','members','guests','settings','qatraining','skill','wacerts','docs','users','seating'],
-  manager: ['overview','checkin','meetings','members','guests','settings','qatraining','skill','wacerts','docs','users','seating'],
+  admin:   ['overview','checkin','meetings','members','guests','settings','qatraining','skill','wacerts','docs','users','seating','testwacert'],
+  manager: ['overview','checkin','meetings','members','guests','settings','qatraining','skill','wacerts','docs','users','seating','testwacert'],
   staff:   ['overview','checkin','members','guests','skill','wacerts','docs'],
   viewer:  ['overview','checkin','members','guests','wacerts','docs']
 };
@@ -106,7 +106,7 @@ function switchPage(page) {
   document.querySelectorAll('.sb-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
   document.getElementById('topbar-title').textContent = {
     overview: '總覽', meetings: '會議管理', members: '會員管理',
-    guests: '來賓管理', users: '用戶管理', seating: '餐桌排位', checkin: '簽到操作', settings: '系統設定', qatraining: 'Q&A 訓練', wacert: '入錢憑證', skill: '火炭會 Skill'
+    guests: '來賓管理', users: '用戶管理', seating: '餐桌排位', checkin: '簽到操作', settings: '系統設定', qatraining: 'Q&A 訓練', wacert: '入錢憑證', testwacert: '測試入錢憑證', skill: '火炭會 Skill'
   }[page] || '';
   if (page !== 'checkin') { clearInterval(ciPollTimer); ciPollTimer = null; }
   loadPage(page).catch(function(e) {
@@ -128,6 +128,7 @@ async function loadPage(page) {
     case 'docs': renderDocsPage(pc); break;
     case 'users': await renderUsersPage(pc); break;
     case 'wacert': await renderWaCertPage(pc); break;
+    case 'testwacert': await renderTestWaCertPage(pc); break;
     case 'skill': await renderSkillPage(pc); break;
   }
 }
@@ -2972,7 +2973,7 @@ async function loadWaCerts() {
       <td style="max-width:160px;white-space:pre-wrap;word-break:break-word;cursor:pointer" onclick="editCertComment(${r.id},'${esc(r.comment||'')}')" title="點擊修改備註">${esc(r.comment||'—')}</td>
       <td style="font-size:11px">${esc((r.created_at||'').substring(0,16))}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt?id=${r.id}','_blank')">🧾 出收據</button>
+        <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="sendCertReceiptToChatbot('${esc(r.r2_key||'')}','${esc(r.person_name||'')}','${esc(r.note||'')}','${esc(r.comment||'')}','${esc(r.from_number||'')}','${esc((r.created_at||'').substring(0,10))}',${r.meeting_id||0})">🧾 出收據</button>
         <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">PDF版</button>
         ${r.person_name
           ? `<button class="btn btn-sm" style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="unlinkWaCert(${r.id})">取消關聯</button>
@@ -3332,4 +3333,262 @@ async function loadTelegramMessages(chatId) {
     log.innerHTML = html;
     log.scrollTop = log.scrollHeight;
   } catch(e) { log.innerHTML = '<div class="chat-msg system">載入失敗</div>'; }
+}
+
+// ── Test 入錢憑證 Page ──────────────────────────
+async function renderTestWaCertPage(pc) {
+  // Load members, guests, and meetings for dropdowns
+  let allMembers = [], allGuests = [], allMeetings = [];
+  try {
+    const [mRes, gRes, mtRes] = await Promise.all([
+      fetch('/api/members').then(r => r.json()),
+      fetch('/api/guests').then(r => r.json()),
+      fetch('/api/meetings').then(r => r.json())
+    ]);
+    allMembers = Array.isArray(mRes) ? mRes : [];
+    allGuests = Array.isArray(gRes) ? gRes : [];
+    allMeetings = Array.isArray(mtRes) ? mtRes : [];
+  } catch(e) {}
+
+  const payeeOptions = '<optgroup label="── 會員 ──">' +
+    allMembers.map(m => '<option value="member:' + m.id + '" data-name="' + esc(m.name) + '">' + esc(m.name) + ' ' + esc(m.tel||'') + '</option>').join('') +
+    '</optgroup><optgroup label="── 來賓 ──">' +
+    allGuests.map(g => '<option value="guest:' + g.id + '" data-name="' + esc(g.name) + '">' + esc(g.name) + ' ' + esc(g.tel||'') + '</option>').join('') +
+    '</optgroup>';
+
+  const meetingOptions = allMeetings.map(m => {
+    const label = (m.date||'').substring(0,10) + ' ' + esc(m.title||m.theme||m.type||'');
+    return '<option value="' + m.id + '">' + label + '</option>';
+  }).join('');
+
+  pc.innerHTML = '<h2 style="font-size:20px;font-weight:700;margin-bottom:16px">🧪 測試入錢憑證</h2>' +
+    '<div class="panel" style="max-width:640px">' +
+      '<div class="panel-header"><h2>📤 手動上傳入錢憑證</h2></div>' +
+      '<div class="panel-body">' +
+        '<div id="testwacert-preview" style="margin-bottom:16px;text-align:center;display:none">' +
+          '<img id="testwacert-preview-img" style="max-width:100%;max-height:300px;border-radius:8px;border:1.5px solid var(--border)">' +
+        '</div>' +
+        '<div style="margin-bottom:16px">' +
+          '<label style="display:block;font-weight:600;margin-bottom:6px;font-size:14px">📷 入數紙圖片</label>' +
+          '<input type="file" id="testwacert-file" accept="image/*" onchange="previewTestWaCert()" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px">' +
+          '<div style="font-size:11px;color:var(--text2);margin-top:4px">支援 JPG / PNG，最大 ~10MB</div>' +
+        '</div>' +
+        '<div style="margin-bottom:16px">' +
+          '<label style="display:block;font-weight:600;margin-bottom:6px;font-size:14px">👤 付款人</label>' +
+          '<input type="text" id="testwacert-search" placeholder="🔍 搜尋會員或來賓..." oninput="filterTestWaCertPayee()"' +
+            ' style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:8px;outline:none"' +
+            ' autocomplete="off">' +
+          '<select id="testwacert-payee" size="5" style="width:100%;padding:6px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit">' + payeeOptions + '</select>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">' +
+          '<div>' +
+            '<label style="display:block;font-weight:600;margin-bottom:6px;font-size:14px">💳 付款方式</label>' +
+            '<select id="testwacert-method" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit">' +
+              '<option value="">請選擇...</option>' +
+              '<option value="FPS">FPS 轉數快</option>' +
+              '<option value="PayMe">PayMe</option>' +
+              '<option value="Alipay">Alipay / 支付寶</option>' +
+              '<option value="銀行轉帳">銀行轉帳</option>' +
+              '<option value="現金">現金</option>' +
+              '<option value="支票">支票</option>' +
+              '<option value="其他">其他</option>' +
+            '</select>' +
+          '</div>' +
+          '<div>' +
+            '<label style="display:block;font-weight:600;margin-bottom:6px;font-size:14px">📅 例會</label>' +
+            '<select id="testwacert-meeting" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit">' +
+              '<option value="">未分類</option>' +
+              meetingOptions +
+            '</select>' +
+          '</div>' +
+        '</div>' +
+        '<div style="margin-bottom:16px">' +
+          '<label style="display:block;font-weight:600;margin-bottom:6px;font-size:14px">📝 備註</label>' +
+          '<textarea id="testwacert-comment" rows="2" placeholder="可選備註..." style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;resize:vertical"></textarea>' +
+        '</div>' +
+        '<button class="btn btn-primary" onclick="submitTestWaCert()" style="width:100%;padding:12px;font-size:15px;font-weight:600">' +
+          '📤 上傳入錢憑證' +
+        '</button>' +
+        '<div id="testwacert-msg" style="margin-top:12px;font-size:13px;text-align:center"></div>' +
+      '</div>' +
+    '</div>';
+}
+
+function previewTestWaCert() {
+  const file = document.getElementById('testwacert-file').files[0];
+  const preview = document.getElementById('testwacert-preview');
+  const img = document.getElementById('testwacert-preview-img');
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      img.src = e.target.result;
+      preview.style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  } else {
+    preview.style.display = 'none';
+  }
+}
+
+function filterTestWaCertPayee() {
+  const q = (document.getElementById('testwacert-search')?.value || '').toLowerCase();
+  const raw = q.replace(/[^0-9]/g, '');
+  const select = document.getElementById('testwacert-payee');
+  if (!select) return;
+  const options = select.options;
+  for (let i = 0; i < options.length; i++) {
+    const opt = options[i];
+    if (opt.disabled || opt.label.startsWith('──')) { opt.style.display = q ? 'none' : ''; continue; }
+    const name = (opt.getAttribute('data-name') || opt.textContent || '').toLowerCase();
+    const tel = (opt.textContent || '').replace(/[^0-9]/g, '');
+    const match = !q || name.includes(q) || (raw && tel.includes(raw));
+    opt.style.display = match ? '' : 'none';
+  }
+}
+
+async function submitTestWaCert() {
+  const msg = document.getElementById('testwacert-msg');
+  const btn = event.target;
+  const fileInput = document.getElementById('testwacert-file');
+  const file = fileInput.files[0];
+  const payeeEl = document.getElementById('testwacert-payee');
+  const methodEl = document.getElementById('testwacert-method');
+  const meetingEl = document.getElementById('testwacert-meeting');
+  const commentEl = document.getElementById('testwacert-comment');
+
+  if (!file) { msg.innerHTML = '<span style="color:#ef4444">請選擇入數紙圖片</span>'; return; }
+  if (!payeeEl.value) { msg.innerHTML = '<span style="color:#ef4444">請選擇付款人</span>'; return; }
+
+  const payeeVal = payeeEl.value;
+  const [personType, personId] = payeeVal.split(':');
+  const selectedOpt = payeeEl.selectedOptions[0];
+  const personName = selectedOpt ? (selectedOpt.getAttribute('data-name') || selectedOpt.textContent.split(' ')[0]) : '';
+
+  btn.disabled = true;
+  btn.textContent = '上傳中...';
+  msg.innerHTML = '<span style="color:var(--text2)">⏳ 正在上傳...</span>';
+
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('讀取檔案失敗'));
+      reader.readAsDataURL(file);
+    });
+
+    const body = {
+      from_number: 'admin-manual',
+      data: base64,
+      person_type: personType,
+      person_id: parseInt(personId) || 0,
+      person_name: personName,
+      meeting_id: parseInt(meetingEl.value) || 0,
+      comment: commentEl.value.trim(),
+      note: methodEl.value
+    };
+
+    const resp = await fetch('/api/whatsapp-cert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+
+    if (data.ok) {
+      const r2Key = data.r2_key || '';
+      const methodLabel = methodEl.value || '未指定';
+      const meetingLabel = meetingEl.selectedOptions[0] ? meetingEl.selectedOptions[0].textContent : '未分類';
+
+      msg.innerHTML = '<span style="color:#059669">✅ 入錢憑證已上傳！</span>' +
+        '<br><small>可到「入錢憑證」頁面查看</small>' +
+        '<br><button class="btn btn-sm" style="margin-top:8px;background:#8b5cf6;color:#fff;font-size:12px;padding:6px 14px" onclick="sendCertToChatbot(\'' + esc(r2Key) + '\',\'' + esc(personName) + '\',\'' + esc(methodLabel) + '\',\'' + esc(meetingLabel) + '\',\'' + esc(commentEl.value.trim()) + '\')">🤖 交俾 Chatbot 出收據</button>';
+
+      fileInput.value = '';
+      document.getElementById('testwacert-preview').style.display = 'none';
+      payeeEl.selectedIndex = -1;
+      document.getElementById('testwacert-search').value = '';
+      methodEl.selectedIndex = 0;
+      commentEl.value = '';
+      toast('入錢憑證已上傳');
+    } else {
+      msg.innerHTML = '<span style="color:#ef4444">❌ 上傳失敗：' + esc(data.error || '未知錯誤') + '</span>';
+    }
+  } catch(e) {
+    msg.innerHTML = '<span style="color:#ef4444">❌ 上傳失敗：' + esc(e.message) + '</span>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 上傳入錢憑證';
+  }
+}
+
+// ── Send cert from 入錢憑證 list to chatbot for receipt generation ──
+async function sendCertReceiptToChatbot(r2Key, personName, paymentMethod, comment, fromNumber, certDate, meetingId) {
+  const imageUrl = r2Key ? window.location.origin + '/api/image?name=' + encodeURIComponent(r2Key) : '';
+  const prompt = [
+    '請根據以下入數紙資料生成收據：',
+    '',
+    '📷 入數紙圖片：' + imageUrl,
+    '👤 付款人：' + (personName || '未關聯'),
+    '💳 付款方式：' + (paymentMethod || '未指定'),
+    '📱 來自：' + (fromNumber || '—'),
+    '📅 上傳日期：' + (certDate || '—'),
+    '🆔 會議 ID：' + (meetingId || 0),
+    '⚠️ 請先用 meeting_id=' + (meetingId || 0) + ' 查詢 get_meetings 搵出對應嘅例會日期同主題，然後將活動名稱填入收據嘅 event 欄位。',
+    comment ? '📝 備註：' + comment : ''
+  ].filter(Boolean).join('\n');
+
+  // Expand chat panel if collapsed
+  const chatPanel = document.getElementById('chat-panel');
+  if (chatPanel && chatPanel.classList.contains('collapsed')) toggleChatPanel();
+
+  await sendChatMessageDirect(prompt);
+  toast('已發送給 Chatbot，請查看聊天面板');
+}
+
+// ── Send uploaded cert to chatbot for receipt generation ──
+async function sendCertToChatbot(r2Key, personName, methodLabel, meetingLabel, comment) {
+  const imageUrl = r2Key ? window.location.origin + '/api/image?name=' + encodeURIComponent(r2Key) : '';
+  const prompt = [
+    '請根據以下入數紙資料生成收據：',
+    '',
+    '📷 入數紙圖片：' + imageUrl,
+    '👤 付款人：' + personName,
+    '💳 付款方式：' + methodLabel,
+    '📅 例會：' + meetingLabel,
+    comment ? '📝 備註：' + comment : ''
+  ].filter(Boolean).join('\n');
+
+  const chatPanel = document.getElementById('chat-panel');
+  if (chatPanel && chatPanel.classList.contains('collapsed')) toggleChatPanel();
+
+  await sendChatMessageDirect(prompt);
+  toast('已發送給 Chatbot，請查看聊天面板');
+}
+
+// Programmatically send a message to the chatbot (bypasses chat input)
+async function sendChatMessageDirect(msg) {
+  appendChatMsg('user', msg);
+  appendChatMsg('assistant', '<i>思考中...</i>');
+  const session = getActiveSession();
+  try {
+    const history = (session.history || []).concat([{role:'user',content:msg}]);
+    const resp = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({messages: history}) });
+    const data = await resp.json();
+    document.querySelector('#chat-msgs .chat-msg:last-child').remove();
+    if (data.error) {
+      appendChatMsg('system', '錯誤：'+esc(data.error));
+      return;
+    }
+    appendChatMsg('assistant', data.reply);
+    session.history = session.history || [];
+    session.history.push({role:'user',content:msg});
+    session.history.push({role:'assistant',content:data.reply});
+    if (session.history.length > 30) session.history = session.history.slice(-30);
+    const sessions = getSessions();
+    const idx = sessions.findIndex(s => s.id === session.id);
+    if (idx >= 0) { sessions[idx] = session; saveSessions(sessions); }
+  } catch(e) {
+    document.querySelector('#chat-msgs .chat-msg:last-child').remove();
+    appendChatMsg('system', '連線失敗：'+esc(e.message));
+  }
 }

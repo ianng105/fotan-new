@@ -113,10 +113,41 @@ export async function onRequest(context) {
     // POST — create (base64 photo) — requires valid token
     if (request.method === 'POST') {
       const body = await request.json();
-      const { token, from_number, data, comment, note, person_type, person_id, person_name } = body;
-      if (!token) return Response.json({ error: 'token required' }, { status: 401, headers: cors });
-      const tok = await verifyToken(token);
-      if (!tok) return Response.json({ error: 'invalid or expired token' }, { status: 401, headers: cors });
+      const { token, from_number, data, comment, note, person_type, person_id, person_name, meeting_id } = body;
+      // Auth: token (skill/WhatsApp) or admin cookie
+      let authorized = false;
+      if (token) {
+        const tok = await verifyToken(token);
+        if (tok) authorized = true;
+      } else {
+        // Check admin cookie (same logic as auth.js checkAdminAuth)
+        const cookie = request.headers.get('Cookie') || '';
+        const match = cookie.match(/fotan_auth=([^;]+)/);
+        if (match) {
+          const authToken = match[1];
+          // 1) Hardcoded admin fallback
+          if (authToken === btoa('admin:admin')) authorized = true;
+          // 2) Admin password from settings
+          if (!authorized) {
+            const pwdRow = await env.DB.prepare("SELECT value FROM settings WHERE key='admin_password'").first();
+            if (pwdRow && authToken === btoa(pwdRow.value)) authorized = true;
+          }
+          // 3) User account — manager or admin
+          if (!authorized) {
+            try {
+              const decoded = atob(authToken);
+              if (decoded.includes(':')) {
+                const [username, role] = decoded.split(':');
+                if (role === 'admin' || role === 'manager') {
+                  const userRow = await env.DB.prepare("SELECT * FROM users WHERE username=? AND status='approved'").bind(username).first();
+                  if (userRow && (userRow.role === 'admin' || userRow.role === 'manager')) authorized = true;
+                }
+              }
+            } catch(e) {}
+          }
+        }
+      }
+      if (!authorized) return Response.json({ error: 'unauthorized' }, { status: 401, headers: cors });
       if (!from_number) return Response.json({ error: 'from_number required' }, { status: 400, headers: cors });
 
       const ts = Date.now();
@@ -137,8 +168,8 @@ export async function onRequest(context) {
       }
 
       await env.DB.prepare(
-        'INSERT INTO whatsapp_cert (from_number, filename, r2_key, comment, note, content_type, file_size, person_type, person_id, person_name) VALUES (?,?,?,?,?,?,?,?,?,?)'
-      ).bind(from_number, filename, r2Key, comment || '', note || '', data ? 'image/jpeg' : '', fileSize, person_type || '', person_id || 0, person_name || '').run();
+        'INSERT INTO whatsapp_cert (from_number, filename, r2_key, comment, note, content_type, file_size, person_type, person_id, person_name, meeting_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+      ).bind(from_number, filename, r2Key, comment || '', note || '', data ? 'image/jpeg' : '', fileSize, person_type || '', person_id || 0, person_name || '', meeting_id || 0).run();
 
       return Response.json({ ok: true, r2_key: r2Key }, { headers: cors });
     }

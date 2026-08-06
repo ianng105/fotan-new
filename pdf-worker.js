@@ -7,13 +7,17 @@ import http from 'node:http';
 
 const PORT = process.env.PDF_PORT || 3000;
 let browser = null;
+let browserPromise = null;  // prevent concurrent launches
 
 async function getBrowser() {
   if (browser && browser.connected) return browser;
-  browser = await puppeteer.launch({
+  if (browserPromise) return browserPromise;  // wait for in-flight launch
+  browserPromise = puppeteer.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']
   });
+  browser = await browserPromise;
+  browserPromise = null;
   return browser;
 }
 
