@@ -623,9 +623,35 @@ export async function executeFunction(env, name, args) {
       if (!name) return JSON.stringify({ error: '請提供付款人姓名，例如：陳大文' });
 
       try {
-        // Generate PDF receipt using pdf-lib (no Puppeteer needed — works in production)
-        const r2Key = await generateReceiptDirect(env, name, amount, phone, date, event, payment_method, receipt_no);
-        if (!r2Key) return JSON.stringify({ error: '收據生成失敗 — 請稍後再試' });
+        const templateHtml = await getHtmlTemplate(env);
+        if (!templateHtml) return JSON.stringify({ error: 'HTML receipt template not available' });
+
+        let dd = '', mm = '', yyyy = '';
+        if (date) {
+          const d = parseDate(date) || date;
+          const parts = String(d).split('-');
+          if (parts.length === 3) { yyyy = parts[0]; mm = parts[1]; dd = parts[2]; }
+          else { dd = String(d).substring(0, 10); }
+        }
+
+        const filledHtml = fillReceiptHtml(templateHtml, {
+          name: name || '',
+          dd, mm, yyyy,
+          amount: String(amount || ''),
+          event: event || '',
+          receiptNo: receipt_no,
+          paymentMethod: payment_method || '',
+          chequeNo, bankName
+        });
+
+        // Convert filled HTML to PDF via local pdf-worker (Puppeteer)
+        const pdfBytes = await convertHtmlToPdf(filledHtml);
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 3000?' });
+
+        const r2Key = 'receipts/receipt-' + receipt_no + '.pdf';
+        await env.R2.put(r2Key, pdfBytes, {
+          httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' }
+        });
 
         const downloadUrl = '/api/image?name=' + encodeURIComponent(r2Key) + '&download=1';
         const methodLabel = payment_method === 'cash' ? '💵現金' : (payment_method === 'PayMe' ? '💳PayMe' : (payment_method === 'FPS' ? '🔁FPS轉數快' : (payment_method === 'cheque' ? '📝支票' : (payment_method || ''))));
@@ -691,9 +717,35 @@ export async function executeFunction(env, name, args) {
         return JSON.stringify({ error: '請提供付款人姓名。例如：AI填表 Ada Cheung' });
       }
       try {
-        // Generate PDF receipt using pdf-lib (no Puppeteer needed — works in production)
-        const r2Key = await generateReceiptDirect(env, name2, amount2, null, date2, event2, payment_method, receipt_no);
-        if (!r2Key) return JSON.stringify({ error: 'AI填表收據生成失敗 — 請稍後再試' });
+        const templateHtml = await getHtmlTemplate(env);
+        if (!templateHtml) return JSON.stringify({ error: 'HTML receipt template not available' });
+
+        let dd = '', mm = '', yyyy = '';
+        if (date2) {
+          const d = parseDate(date2) || date2;
+          const parts = String(d).split('-');
+          if (parts.length === 3) { yyyy = parts[0]; mm = parts[1]; dd = parts[2]; }
+          else { dd = String(d).substring(0, 10); }
+        }
+
+        const filledHtml = fillReceiptHtml(templateHtml, {
+          name: name2 || '',
+          dd, mm, yyyy,
+          amount: String(amount2 || ''),
+          event: event2 || '',
+          receiptNo: receipt_no || '',
+          paymentMethod: payment_method || '',
+          chequeNo: chequeNo2, bankName: bankName2
+        });
+
+        // Convert filled HTML to PDF via local pdf-worker (Puppeteer)
+        const pdfBytes = await convertHtmlToPdf(filledHtml);
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 3000?' });
+
+        const r2Key = 'receipts/receipt-' + (receipt_no || Date.now()) + '.pdf';
+        await env.R2.put(r2Key, pdfBytes, {
+          httpMetadata: { contentType: 'application/pdf', cacheControl: 'no-cache' }
+        });
 
         const downloadUrl = '/api/image?name=' + encodeURIComponent(r2Key) + '&download=1';
         const pmLower = (payment_method || '').toLowerCase();
