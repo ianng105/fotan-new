@@ -1,0 +1,9 @@
+# ========================================
+#  火炭會 BNI Checkin — 環境變數設定
+#  複製此檔案為 .dev.vars 並填上你的金鑰
+#
+#  cp .dev.vars.example .dev.vars
+# ========================================
+
+# Qwen AI API 金鑰（必填 — chatbot 需要此金鑰才能運作）
+QWEN_API_KEY=sk-your-api-key-here
