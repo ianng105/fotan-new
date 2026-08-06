@@ -858,9 +858,13 @@ async function generateReceiptDirect(env, name, amount, phone, date, event, paym
     const doc = await PDFDocument.create();
     doc.registerFontkit(fontkit);
 
+    // Load Chinese font — try multiple sources; fall back to Helvetica if all fail
     let chFont = null;
-    try { const fd = await loadChineseFont(); chFont = await doc.embedFont(fd); } catch(e) {}
-    const F = chFont;
+    try { const fd = await loadChineseFont(env); chFont = await doc.embedFont(fd); } catch(e) { console.error('[receipt] Chinese font load failed:', e.message); }
+    // Always embed Helvetica as fallback
+    let helv = null;
+    try { helv = await doc.embedFont(StandardFonts.Helvetica); } catch(e) {}
+    const F = chFont || helv;  // use Chinese font if available, otherwise Helvetica
 
     const page = doc.addPage([PAGE_W, PAGE_H]);
 
@@ -870,41 +874,37 @@ async function generateReceiptDirect(env, name, amount, phone, date, event, paym
       const bgImage = isPNG ? await doc.embedPng(bgBytes) : await doc.embedJpg(bgBytes);
       page.drawImage(bgImage, { x: 0, y: 0, width: PAGE_W, height: PAGE_H });
 
-      // ── Overlay text on template (skip fields with no data) ──
-      if (F) {
-        if (receiptNum) {
-          page.drawText(receiptNum, { x: tplX(TPL.receiptNo.x), y: tplY(TPL.receiptNo.y), font: F, size: TPL.receiptNo.size, color: BLUE });
+      // ── Overlay text on template ──
+      if (receiptNum) {
+        page.drawText(receiptNum, { x: tplX(TPL.receiptNo.x), y: tplY(TPL.receiptNo.y), font: F, size: TPL.receiptNo.size, color: BLUE });
+      }
+      if (name) {
+        page.drawText(String(name), { x: tplX(TPL.payerName.x), y: tplY(TPL.payerName.y), font: F, size: TPL.payerName.size, color: BLUE });
+      }
+      if (issueDate) {
+        const parts = issueDate.split('-');
+        if (parts.length === 3) {
+          page.drawText(parts[2], { x: tplX(TPL.dateDD.x), y: tplY(TPL.dateDD.y), font: F, size: TPL.dateDD.size, color: BLUE });
+          page.drawText(parts[1], { x: tplX(TPL.dateMM.x), y: tplY(TPL.dateMM.y), font: F, size: TPL.dateMM.size, color: BLUE });
+          page.drawText(parts[0], { x: tplX(TPL.dateYYYY.x), y: tplY(TPL.dateYYYY.y), font: F, size: TPL.dateYYYY.size, color: BLUE });
         }
-        if (name) {
-          page.drawText(String(name), { x: tplX(TPL.payerName.x), y: tplY(TPL.payerName.y), font: F, size: TPL.payerName.size, color: BLUE });
-        }
-        if (issueDate) {
-          const parts = issueDate.split('-');
-          if (parts.length === 3) {
-            page.drawText(parts[2], { x: tplX(TPL.dateDD.x), y: tplY(TPL.dateDD.y), font: F, size: TPL.dateDD.size, color: BLUE });
-            page.drawText(parts[1], { x: tplX(TPL.dateMM.x), y: tplY(TPL.dateMM.y), font: F, size: TPL.dateMM.size, color: BLUE });
-            page.drawText(parts[0], { x: tplX(TPL.dateYYYY.x), y: tplY(TPL.dateYYYY.y), font: F, size: TPL.dateYYYY.size, color: BLUE });
-          }
-        }
-        if (amount && !isNaN(amount)) {
-          const amtStr = 'HK$ ' + String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-          page.drawText(amtStr, { x: tplX(TPL.amount.x), y: tplY(TPL.amount.y), font: F, size: TPL.amount.size, color: BLUE });
-        }
-        if (event) {
-          page.drawText(String(event), { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y), font: F, size: TPL.eventName.size, color: BLUE });
-        }
-        if (payment_method && F) {
-          const pmLabel = payment_method === 'cash' ? '現金' : (payment_method === 'FPS' ? 'FPS轉數快' : (payment_method === 'PayMe' ? 'PayMe' : (payment_method === 'cheque' ? '支票' : payment_method)));
-          page.drawText(pmLabel, { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y) - 14, font: F, size: 9, color: BLUE });
-        }
+      }
+      if (amount && !isNaN(amount)) {
+        const amtStr = 'HK$ ' + String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        page.drawText(amtStr, { x: tplX(TPL.amount.x), y: tplY(TPL.amount.y), font: F, size: TPL.amount.size, color: BLUE });
+      }
+      if (event) {
+        page.drawText(String(event), { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y), font: F, size: TPL.eventName.size, color: BLUE });
+      }
+      if (payment_method) {
+        const pmLabel = payment_method === 'cash' ? 'Cash' : (payment_method === 'FPS' ? 'FPS' : (payment_method === 'PayMe' ? 'PayMe' : (payment_method === 'cheque' ? 'Cheque' : payment_method)));
+        page.drawText(pmLabel, { x: tplX(TPL.eventName.x), y: tplY(TPL.eventName.y) - 14, font: F, size: 9, color: BLUE });
       }
     } else {
       // Fallback: draw receipt from scratch
       const GRAY = rgb(0.38,0.38,0.38), LIGHT = rgb(0.55,0.55,0.55);
       const GREEN = rgb(0.09,0.62,0.29);
-      let helv = null;
-      try { helv = await doc.embedFont(StandardFonts.Helvetica); } catch(e) {}
-      const FB = helv || F;
+      const FB = helv || F;  // helv already embedded above
       function pt(mm) { return mm * 2.8346457; }
       const M = 50;
       let y = PAGE_H - M;

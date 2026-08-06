@@ -6,13 +6,11 @@ let cachedFont = null;
 // Try to load from local static asset first, then CDN sources
 function getUrls(env) {
   const urls = [];
-  // Local static asset (dev server or production Pages/assets)
-  // In Miniflare dev: http://127.0.0.1:8788/assets/NotoSansTC-Regular.woff2
-  // In production: relative path /assets/NotoSansTC-Regular.woff2
-  try {
-    // Use the request origin if available, or fallback to relative
-    urls.push('/assets/NotoSansTC-Regular.woff2');
-  } catch(e) {}
+  // In local Miniflare dev, try absolute URL first (relative fetch fails in Workers)
+  try { urls.push('http://127.0.0.1:8787/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
+  try { urls.push('http://127.0.0.1:8788/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
+  // Production — use relative path (works with Pages asset serving)
+  try { urls.push('/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
   urls.push(
     'https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-tc@latest/chinese-traditional-400-normal.woff2',
     'https://fonts.gstatic.com/ea/notosanstc/v1/NotoSansTC-Regular.otf',
