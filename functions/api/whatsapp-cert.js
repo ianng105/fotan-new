@@ -61,6 +61,15 @@ export async function onRequest(context) {
         return Response.json({ meeting: lastMeeting, people: missing }, { headers: cors });
       }
 
+      // ?meeting_id= — filter certs by meeting
+      const meetingId = url.searchParams.get('meeting_id');
+      if (meetingId) {
+        const rows = await env.DB.prepare(
+          'SELECT * FROM whatsapp_cert WHERE meeting_id=? ORDER BY created_at DESC'
+        ).bind(meetingId).all();
+        return Response.json(rows.results, { headers: cors });
+      }
+
       const rows = await env.DB.prepare('SELECT * FROM whatsapp_cert ORDER BY created_at DESC').all();
       return Response.json(rows.results, { headers: cors });
     }
