@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html><head><style>
+body{margin:0;font-family:monospace;display:flex}
+#panel{width:300px;padding:10px;background:#222;color:#0f0;font-size:11px;overflow-y:auto;max-height:100vh}
+#panel h3{color:#ff0;margin:8px 0}
+#panel div{margin:2px 0}
+canvas{cursor:crosshair}
+</style></head><body>
+<div id="panel">
+<h3>Click positions on template</h3>
+<div id="pos"></div>
+<h3>Field Coordinates</h3>
+<div id="fields"></div>
+<h3>Instructions</h3>
+<div>Click each field location:
+<br>1. Receipt No. (after No:)
+<br>2. Payer Name (Received from)
+<br>3. Date DD box
+<br>4. Date MM box
+<br>5. Date YYYY box
+<br>6. Amount
+<br>7. Event (Being in payment)
+</div>
+</div>
+<canvas id="c"></canvas>
+<script>
+const img = new Image();
+img.onload = function() {
+  const c = document.getElementById('c');
+  c.width = img.width; c.height = img.height;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const fields = [];
+  const names = ['receiptNo','payerName','dateDD','dateMM','dateYYYY','amount','eventName'];
+  let idx = 0;
+  document.getElementById('fields').innerHTML = '<i>Click to start...</i>';
+
+  c.onclick = function(e) {
+    const rect = c.getBoundingClientRect();
+    const x = Math.round(e.clientX - rect.left);
+    const y = Math.round(e.clientY - rect.top);
+    document.getElementById('pos').innerHTML = 'Last click: <b>x='+x+' y='+y+'</b>';
+    if (idx < names.length) {
+      fields.push({name: names[idx], x, y});
+      document.getElementById('fields').innerHTML = fields.map(f =>
+        '<div style="color:#0ff">'+f.name+': {x:'+f.x+', y:'+f.y+'}</div>'
+      ).join('');
+      // Draw marker
+      ctx.strokeStyle = 'red'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI*2); ctx.stroke();
+      ctx.fillStyle = 'red';
+      ctx.fillText(f.name, x+15, y+5);
+      idx++;
+      if (idx >= names.length) {
+        document.getElementById('fields').innerHTML += '<div style="color:#ff0;margin-top:10px"><b>TPL COORDINATES (copy these):</b></div><div style="color:#0f0">' +
+          fields.map(f => f.name+': {x:'+f.x+', y:'+f.y+', size:11}').join(',<br>') + '</div>';
+      }
+    }
+  };
+};
+img.src = '火炭會receipt_template.png';
+</script></body></html>
