@@ -3524,45 +3524,60 @@ async function submitTestWaCert() {
 // ── Send cert from 入錢憑證 list to chatbot for receipt generation ──
 async function sendCertReceiptToChatbot(r2Key, personName, paymentMethod, comment, fromNumber, certDate, meetingId) {
   const imageUrl = r2Key ? window.location.origin + '/api/image?name=' + encodeURIComponent(r2Key) : '';
-  const prompt = [
-    '請根據以下入數紙資料生成收據：',
-    '',
-    '📷 入數紙圖片：' + imageUrl,
-    '👤 付款人：' + (personName || '未關聯'),
-    '💳 付款方式：' + (paymentMethod || '未指定'),
-    '📱 來自：' + (fromNumber || '—'),
-    '📅 上傳日期：' + (certDate || '—'),
-    '🆔 會議 ID：' + (meetingId || 0),
-    '⚠️ 請先用 meeting_id=' + (meetingId || 0) + ' 查詢 get_meetings 搵出對應嘅例會日期同主題，然後將活動名稱填入收據嘅 event 欄位。',
-    comment ? '📝 備註：' + comment : ''
-  ].filter(Boolean).join('\n');
+  const textPrompt = '出收據：' + (personName || '未關聯') + ' | ' + (paymentMethod || '') + ' | meeting_id=' + (meetingId || 0) + (certDate ? ' | ' + certDate : '') + (comment ? ' | ' + comment : '');
 
   // Expand chat panel if collapsed
   const chatPanel = document.getElementById('chat-panel');
   if (chatPanel && chatPanel.classList.contains('collapsed')) toggleChatPanel();
 
-  await sendChatMessageDirect(prompt);
+  // Send as real image attachment → triggers VL scan → shows preview → user confirms
+  await sendChatMessageWithImage(textPrompt, imageUrl, personName);
   toast('已發送給 Chatbot，請查看聊天面板');
 }
 
 // ── Send uploaded cert to chatbot for receipt generation ──
 async function sendCertToChatbot(r2Key, personName, methodLabel, meetingLabel, comment) {
   const imageUrl = r2Key ? window.location.origin + '/api/image?name=' + encodeURIComponent(r2Key) : '';
-  const prompt = [
-    '請根據以下入數紙資料生成收據：',
-    '',
-    '📷 入數紙圖片：' + imageUrl,
-    '👤 付款人：' + personName,
-    '💳 付款方式：' + methodLabel,
-    '📅 例會：' + meetingLabel,
-    comment ? '📝 備註：' + comment : ''
-  ].filter(Boolean).join('\n');
+  const textPrompt = '出收據：' + personName + ' | ' + methodLabel + ' | ' + meetingLabel + (comment ? ' | ' + comment : '');
 
   const chatPanel = document.getElementById('chat-panel');
   if (chatPanel && chatPanel.classList.contains('collapsed')) toggleChatPanel();
 
-  await sendChatMessageDirect(prompt);
+  // Send as real image attachment → triggers VL scan → shows preview → user confirms
+  await sendChatMessageWithImage(textPrompt, imageUrl, personName);
   toast('已發送給 Chatbot，請查看聊天面板');
+}
+
+// Programmatically send a message with image to chatbot → triggers VL scan + preview
+async function sendChatMessageWithImage(textMsg, imageUrl, displayName) {
+  appendChatMsg('user', '📸 出收據：' + (displayName || textMsg));
+  appendChatMsg('assistant', '<i>Scan 緊入數紙...</i>');
+  const session = getActiveSession();
+  try {
+    const userContent = [
+      { type: 'image_url', image_url: { url: imageUrl } },
+      { type: 'text', text: textMsg }
+    ];
+    const history = (session.history || []).concat([{role:'user',content:userContent}]);
+    const resp = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({messages: history}) });
+    const data = await resp.json();
+    document.querySelector('#chat-msgs .chat-msg:last-child').remove();
+    if (data.error) {
+      appendChatMsg('system', '錯誤：'+esc(data.error));
+      return;
+    }
+    appendChatMsg('assistant', data.reply);
+    session.history = session.history || [];
+    session.history.push({role:'user',content:textMsg});
+    session.history.push({role:'assistant',content:data.reply});
+    if (session.history.length > 30) session.history = session.history.slice(-30);
+    const sessions = getSessions();
+    const idx = sessions.findIndex(s => s.id === session.id);
+    if (idx >= 0) { sessions[idx] = session; saveSessions(sessions); }
+  } catch(e) {
+    document.querySelector('#chat-msgs .chat-msg:last-child').remove();
+    appendChatMsg('system', '連線失敗：'+esc(e.message));
+  }
 }
 
 // Programmatically send a message to the chatbot (bypasses chat input)

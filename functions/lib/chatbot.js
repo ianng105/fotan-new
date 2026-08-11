@@ -587,7 +587,7 @@ export async function executeFunction(env, name, args) {
       // ── Direct HTML template fill — only name required ──
       let { name, amount, phone, date, event, text, payment_method } = args;
       // Parse from natural language text if fields not explicitly provided
-      if (text && !name) {
+      if (text && (!name || !amount || !date)) {
         let m = text.match(/(.+?)\s*(?:paid|已付|付款)\s*\$?(\d+)/i);
         if (!m) m = text.match(/(\S+)\s+(\d{8})\s+(\d{1,2}月\d{1,2})\s+(\d+)\s*元?/);
         if (!m) m = text.match(/(.+?)\s+(\d+)\s*元?\s*$/);
@@ -596,6 +596,27 @@ export async function executeFunction(env, name, args) {
           name = name || m[1].trim();
           if (!amount && m.length > 2) amount = parseInt(m[m.length-1].match(/\d+/)?.[0] || m[2]);
           if (!phone && text.match(/(\d{8})/)) phone = RegExp.$1;
+        }
+        // Extract date from text if VL didn't provide one (e.g. "2026-07-10" or "7月10日")
+        if (!date) {
+          const dateMatch = text.match(/(\d{4}-\d{2}-\d{2})/);
+          if (dateMatch) date = dateMatch[1];
+          else {
+            const cnDateMatch = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日號]/);
+            if (cnDateMatch) {
+              const yy = new Date().getFullYear();
+              date = yy + '-' + String(parseInt(cnDateMatch[1])).padStart(2,'0') + '-' + String(parseInt(cnDateMatch[2])).padStart(2,'0');
+            }
+          }
+        }
+        // Extract amount from text if VL didn't provide one (e.g. "$388" "港幣388")
+        if (!amount) {
+          const amtMatch = text.match(/(?:HK\$|港幣|HKD|💰|💵|🏧)\s*\$?\s*(\d{2,6})/i);
+          if (amtMatch) amount = parseInt(amtMatch[1]);
+          else {
+            const fallbackAmt = text.match(/(\d{2,4})\s*(?:元|蚊|HKD|dollars?)/i);
+            if (fallbackAmt) amount = parseInt(fallbackAmt[1]);
+          }
         }
       }
       // Detect payment method from text (only if not already provided as direct arg)
@@ -1162,20 +1183,121 @@ export async function callQwen(env, messages, apiKey) {
   const vlOnlyMode = hasImage && !lastHasText;
   const model = hasImage ? 'qwen-vl-plus' : 'qwen-plus';
 
+  // ── Detect confirmation after VL preview ──
+  // If user says "OK/confirm/yes" and previous assistant msg contains VL-extracted payment data,
+  // call generate_receipt directly instead of going through Qwen (avoids Qwen re-parsing failures)
+  const lastUserMsg2 = [...messages].reverse().find(m => m.role === 'user');
+  const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+  const userText = lastUserMsg2 && typeof lastUserMsg2.content === 'string' ? lastUserMsg2.content.trim() : '';
+  const assistantText = lastAssistantMsg && typeof lastAssistantMsg.content === 'string' ? lastAssistantMsg.content : '';
+
+  // Also check the triggering user message (the one before the assistant preview) for meeting_id etc.
+  const assistantIdx = messages.lastIndexOf(lastAssistantMsg);
+  const triggerUserMsg = assistantIdx > 0 ? messages[assistantIdx - 1] : null;
+  let triggerText = '';
+  if (triggerUserMsg && triggerUserMsg.role === 'user') {
+    if (typeof triggerUserMsg.content === 'string') triggerText = triggerUserMsg.content;
+    else if (Array.isArray(triggerUserMsg.content)) {
+      // Extract text from array content (image_url + text)
+      const txtPart = triggerUserMsg.content.find(c => c.type === 'text');
+      if (txtPart) triggerText = txtPart.text || '';
+    }
+  }
+
+  const isConfirm = /^(ok|okay|confirm|yes|correct|right|good|啱|係|對|好|可以|確認|沒錯|無問題|冇問題|正確|proceed|go\s*ahead|do\s*it|please|please\s*do|please\s*proceed)\b[.!！。\s]*$/i.test(userText);
+  const hasPreviewData = assistantText.includes('scan 咗你張付款憑證') || assistantText.includes('憑證分析結果');
+
+  if (isConfirm && hasPreviewData) {
+    // Extract data from preview message + triggering user message
+    let payerName = '', amount = 0, date = '', paymentMethod = '', event = '', phone = '';
+
+    // From assistant preview
+    const nameMatch = assistantText.match(/付款人[：:]\s*(.+?)(?:\n|$)/);
+    if (nameMatch) payerName = nameMatch[1].trim();
+    const amtMatch = assistantText.match(/金額[：:]\s*(?:港幣\$?|HK\$?)?(\d+)/);
+    if (amtMatch) amount = parseInt(amtMatch[1]);
+    const dateMatch = assistantText.match(/日期[：:]\s*(\d{4}-\d{2}-\d{2})/);
+    if (dateMatch) date = dateMatch[1];
+    const phoneMatch = assistantText.match(/電話[：:]\s*(\d+)/);
+    if (phoneMatch) phone = phoneMatch[1].trim();
+
+    // Payment method: prefer from trigger text (admin button) else from preview
+    if (triggerText) {
+      if (triggerText.match(/fps|轉數快/i)) paymentMethod = 'FPS';
+      else if (triggerText.match(/payme/i)) paymentMethod = 'PayMe';
+      else if (triggerText.match(/現金|cash/i)) paymentMethod = 'cash';
+      else if (triggerText.match(/支票|cheque|check/i)) paymentMethod = 'cheque';
+    }
+    if (!paymentMethod) {
+      const pmMatch = assistantText.match(/付款方式[：:]\s*(.+?)(?:\n|$)/);
+      if (pmMatch) {
+        const pm = pmMatch[1].trim();
+        if (pm.includes('FPS') || pm.includes('轉數快')) paymentMethod = 'FPS';
+        else if (pm.includes('PayMe')) paymentMethod = 'PayMe';
+        else if (pm.includes('現金') || pm.includes('Cash')) paymentMethod = 'cash';
+        else if (pm.includes('支票') || pm.includes('Cheque')) paymentMethod = 'cheque';
+      }
+    }
+
+    // Look up meeting_id from trigger text → get correct date + event
+    let meetingId = 0;
+    if (triggerText) {
+      const midMatch = triggerText.match(/meeting_id[=：:\s]*(\d+)/i);
+      if (midMatch) meetingId = parseInt(midMatch[1]);
+    }
+    if (meetingId) {
+      try {
+        const meeting = await env.DB.prepare('SELECT * FROM meetings WHERE id=?').bind(meetingId).first();
+        if (meeting) {
+          date = meeting.date || date;  // Override with actual meeting date
+          const typeLabel = meeting.type === 'regular' ? '例會' : (meeting.type === 'special' ? '特別會議' : (meeting.type === 'anniversary' ? '週年聚餐' : meeting.type));
+          event = meeting.date + ' ' + typeLabel;
+        }
+      } catch(e) { /* ignore db error */ }
+    }
+
+    // Event: from preview or trigger text
+    if (!event) {
+      const eventMatch = assistantText.match(/活動[：:]\s*(.+?)(?:\n|$)/);
+      if (eventMatch) event = eventMatch[1].trim();
+    }
+
+    if (payerName) {
+      const fnResult = await executeFunction(env, 'generate_receipt', {
+        name: payerName, amount, date, event, phone,
+        payment_method: paymentMethod,
+        text: assistantText
+      });
+      const result = JSON.parse(fnResult);
+      if (result.ok) {
+        const replyText = (result.message || '').replace(/📥\s*(\/api[^\s]+)/g, '📥 <a href="$1" target="_blank">撳呢度下載收據</a>');
+        return { reply: replyText, tools_used: ['generate_receipt'] };
+      } else {
+        return { reply: '出收據失敗：' + (result.error || '不明錯誤'), tools_used: [] };
+      }
+    }
+  }
+
   const systemMsg = { role: 'system', content: getSystemPrompt() };
   // VL-only: used when user sends a bare image with no text
   const vlSystemPrompt = `你是火炭會聚會助理龍蝦仔🦞。用戶發送了一張付款憑證截圖（PayMe/FPS/銀行轉帳）。
 
-請從圖片中提取以下資訊並以JSON格式回覆（只回覆JSON，不要其他文字）：
+請仔細掃描圖片中所有文字同數字，提取以下資訊並以JSON格式回覆（只回覆JSON，不要其他文字）：
 {
   "payer_name": "付款人顯示的名稱（中英文皆可）",
-  "phone": "電話號碼（如有）",
-  "amount": 金額數字（只回數字，唔好有$或逗號）,
-  "date": "交易日期 YYYY-MM-DD（如有）",
-  "bank": "付款銀行或平台（如有）",
-  "note": "備註/參考號碼（如有）"
+  "phone": "電話號碼",
+  "amount": 金額數字（必須提取，只回數字，唔好有$或逗號）,
+  "date": "交易日期 YYYY-MM-DD（必須提取，仔細搵圖片上任何日期）",
+  "bank": "付款銀行或平台（FPS/轉數快/PayMe/銀行名）",
+  "note": "備註/參考號碼/交易編號"
 }
-如果某欄位無法辨識，填null。`;
+
+⚠️ 重要規則：
+- amount 同 date 係必填欄位，必須盡最大努力從圖片中辨識，絕對唔可以填null！
+- date 要喺圖片上仔細搵任何類似日期嘅數字（例如 2026-07-10、10/07/2026、10 Jul 2026），轉換成 YYYY-MM-DD 格式
+- amount 要搵任何 $$$、HKD、港幣、金額、Total 附近嘅數字
+- payer_name 要搵付款人/轉賬人/Payer/From 附近嘅名
+- 如果真係完全搵唔到某欄位，先填 null，但 amount 同 date 一定要盡力填`;
   const allMsgs = vlOnlyMode
     ? [{ role: 'system', content: vlSystemPrompt }, ...messages]
     : [systemMsg, ...messages];
@@ -1218,11 +1340,13 @@ export async function callQwen(env, messages, apiKey) {
       } catch (e) { /* extraction failed */ }
 
       if (extracted && extracted.payer_name) {
-        // Step 2: Combine extracted info + user text → generate receipt
+        // Step 2: Show preview first, let user confirm before generating receipt
         const name = extracted.payer_name;
         const amount = extracted.amount ? parseInt(extracted.amount) : 0;
         const date = extracted.date || '';
         const phone = extracted.phone || '';
+        const bank = extracted.bank || '';
+        const note = extracted.note || '';
 
         // Extract payment method and event from user text
         let payment_method = '';
@@ -1235,26 +1359,25 @@ export async function callQwen(env, messages, apiKey) {
         const eventMatch = textContent.match(/(?:for|at|in|活動|聚餐)?\s*(例會|特別會議|週年聚餐|四週年聚餐)/i);
         if (eventMatch) event = eventMatch[1];
 
-        const fnResult = await executeFunction(env, 'generate_receipt', {
-          name, amount, phone, date, event,
-          payment_method,
-          text: textContent
-        });
-        const result = JSON.parse(fnResult);
+        // Build preview — show user what VL extracted, ask for confirmation
+        let summary = '📸 我 scan 咗你張付款憑證，以下係我讀取到嘅資料：\n\n';
+        summary += '🏷️ 付款人：' + name + '\n';
+        if (amount) summary += '💰 金額：港幣$' + amount + '\n';
+        else summary += '💰 金額：⚠️ 未偵測到，請補充\n';
+        if (date) summary += '📅 日期：' + date + '\n';
+        else summary += '📅 日期：⚠️ 未偵測到，請補充\n';
+        if (phone) summary += '📱 電話：' + phone + '\n';
+        if (payment_method) summary += '💳 付款方式：' + (payment_method === 'cash' ? '現金' : payment_method === 'FPS' ? 'FPS轉數快' : payment_method === 'PayMe' ? 'PayMe' : payment_method) + '\n';
+        if (event) summary += '🎉 活動：' + event + '\n';
+        if (bank) summary += '🏦 平台：' + bank + '\n';
+        if (note) summary += '📝 備註：' + note + '\n';
 
-        if (result.ok) {
-          // Build summary with extracted info
-          let summary = '📸 憑證分析結果：\n';
-          summary += '🏷️ 付款人：' + name + '\n';
-          if (amount) summary += '💰 金額：港幣$' + amount + '\n';
-          if (date) summary += '📅 日期：' + date + '\n';
-          if (payment_method) summary += '💳 付款方式：' + (payment_method === 'cash' ? '現金' : payment_method === 'FPS' ? 'FPS轉數快' : payment_method === 'PayMe' ? 'PayMe' : payment_method) + '\n';
-          if (event) summary += '🎉 活動：' + event + '\n';
-          summary += '\n' + result.message.replace(/📥\s*(\/api[^\s]+)/g, '📥 <a href="$1" target="_blank">撳呢度下載收據</a>');
-          return { reply: summary, tools_used: ['generate_receipt'] };
-        } else {
-          return { reply: '📸 已從圖片提取：' + name + (amount ? ' | 港幣$' + amount : '') + '\n但收據生成失敗：' + (result.error || '不明錯誤'), tools_used: [] };
-        }
+        summary += '\n---\n';
+        summary += '⏳ 以上資料啱唔啱？\n';
+        summary += '✅ 啱嘅話請覆「OK」或「confirm」，我即刻出收據！\n';
+        summary += '✏️ 有錯嘅話請直接話我知邊度要改（例如：「金額係388」「日期係2026-07-15」）';
+
+        return { reply: summary, tools_used: [] };
       } else {
         return { reply: '📸 無法從圖片中辨識付款人資訊，請手動提供姓名同金額。', tools_used: [] };
       }
@@ -1338,16 +1461,13 @@ export async function callQwen(env, messages, apiKey) {
           });
           if (sr.people.length === 0) summary += '⚠️ 找不到匹配記錄，請手動確認\n';
 
-          // Auto-generate receipt if we have a name and amount
+          // Show preview and ask for confirmation instead of auto-generating
           if (sr.people.length > 0 && extracted.amount) {
-            try {
-              const payerName = sr.people[0].name;
-              const rKey = await generateReceiptDirect(env, payerName, extracted.amount, extracted.phone || '', extracted.date || '', '');
-              const receiptUrl = rKey ? '/api/image?name=' + encodeURIComponent(rKey) + '&download=1' : null;
-              if (receiptUrl) {
-                summary += '\n🧾 收據已自動生成！\n📥 ' + receiptUrl;
-              }
-            } catch (e) { /* receipt generation failed, continue without it */ }
+            summary += '\n⏳ 以上資料啱唔啱？\n';
+            summary += '✅ 啱嘅話請覆「OK」或「confirm」，我即刻出收據！\n';
+            summary += '✏️ 有錯嘅話請直接話我知邊度要改。';
+          } else if (sr.people.length > 0 && !extracted.amount) {
+            summary += '\n⚠️ 請提供金額（例如：「$388」），我先出到收據。';
           }
 
           reply = summary;
