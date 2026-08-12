@@ -1036,8 +1036,8 @@ async function getBackgroundImage(env) {
 
 // ── Fetch HTML receipt template from R2 ──
 async function getHtmlTemplate(env) {
-  const R2_KEY = 'templates/fotanclub07.html';
-  const LOCAL_FILE = 'fotanclub07.html';
+  const R2_KEY = 'templates/fotanclub09-v7.html';
+  const LOCAL_FILE = 'fotanclub09.html';
   try {
     const obj = await env.R2.get(R2_KEY);
     if (obj) return new TextDecoder().decode(await obj.arrayBuffer());
@@ -1249,7 +1249,8 @@ export async function callQwen(env, messages, apiKey) {
       try {
         const meeting = await env.DB.prepare('SELECT * FROM meetings WHERE id=?').bind(meetingId).first();
         if (meeting) {
-          date = meeting.date || date;  // Override with actual meeting date
+          // Keep VL-extracted date (actual payment date from image) for the receipt dd/mm/yyyy
+          // Only use meeting.date for the event label
           const typeLabel = meeting.type === 'regular' ? '例會' : (meeting.type === 'special' ? '特別會議' : (meeting.type === 'anniversary' ? '週年聚餐' : meeting.type));
           event = meeting.date + ' ' + typeLabel;
         }
