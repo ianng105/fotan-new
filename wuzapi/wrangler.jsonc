@@ -1,0 +1,41 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-caseylai-whatsapp-wuzapi",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-03",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "alias": {
+    "ws": "./src/ws-shim.ts",
+    "pino": "./src/pino-shim.ts"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wuzapi-db",
+      "database_id": "990d8f53-3c5a-4b7e-a16b-320f6a397e60"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "WHATSAPP_DO",
+        "class_name": "WhatsAppDO"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WhatsAppDO"]
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

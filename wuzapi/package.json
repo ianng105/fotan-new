@@ -1,0 +1,22 @@
+{
+  "name": "ai-caseylai-whatsapp-wuzapi",
+  "version": "2.0.0",
+  "description": "WhatsApp via Baileys + Cloudflare Durable Objects — 100% Cloudflare FREE tier",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "db:init": "wrangler d1 execute wuzapi-db --file=schema.sql",
+    "db:remote": "wrangler d1 execute wuzapi-db --file=schema.sql --remote"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250703.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.100.0"
+  }
+}
