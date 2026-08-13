@@ -140,16 +140,20 @@ async function registerWhatsApp() {
     }
 
     const data = await res.json()
-    if (data.link) {
-      qrImg.src = data.link
+
+    // Worker returns qrLink, not link
+    if (data.qrLink || data.qr) {
+      const qrSrc = data.qrLink || `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(data.qr)}`
+      qrImg.src = qrSrc
       qrContainer.style.display = 'block'
       qrStatus.textContent = 'Scan with WhatsApp on your phone. Auto-detecting...'
       btn.textContent = '✓ QR Generated'
-      loadUserBots()  // show new bot in list immediately
+      loadUserBots()
       pollForScan(userBot)
-    } else if (data.status === 'already_connected') {
-      errorEl.textContent = 'This UserBot is already connected!'
-      btn.textContent = 'Generate QR Code'
+    } else if (data.message) {
+      // QR not ready yet — poll until it appears
+      btn.textContent = '⏳ Waiting for QR...'
+      pollForQR(userBot, password, qrImg, qrContainer, qrStatus, btn, errorEl)
     }
   } catch (err) {
     errorEl.textContent = err.message
@@ -212,6 +216,45 @@ async function deleteUserBot(name) {
   } catch (err) {
     alert('Delete failed: ' + err.message)
   }
+}
+
+// Poll for QR code when it's not immediately available
+function pollForQR(userBot, password, qrImg, qrContainer, qrStatus, btn, errorEl) {
+  let attempts = 0
+  const maxAttempts = 30  // 30 seconds
+  const pollInterval = setInterval(async () => {
+    attempts++
+    try {
+      const res = await fetch(`/api/status/${userBot}`)
+      if (!res.ok) throw new Error('Status check failed')
+      const status = await res.json()
+      if (status.qr) {
+        clearInterval(pollInterval)
+        const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(status.qr)}`
+        qrImg.src = qrSrc
+        qrContainer.style.display = 'block'
+        qrStatus.textContent = 'Scan with WhatsApp on your phone. Auto-detecting...'
+        btn.textContent = '✓ QR Generated'
+        btn.disabled = false
+        loadUserBots()
+        pollForScan(userBot)
+      } else if (attempts >= maxAttempts) {
+        clearInterval(pollInterval)
+        errorEl.textContent = 'QR generation timed out. Please try again.'
+        btn.textContent = 'Generate QR Code'
+        btn.disabled = false
+      } else {
+        btn.textContent = `⏳ Waiting for QR... (${maxAttempts - attempts}s)`
+      }
+    } catch (err) {
+      if (attempts >= maxAttempts) {
+        clearInterval(pollInterval)
+        errorEl.textContent = 'QR polling failed: ' + err.message
+        btn.textContent = 'Generate QR Code'
+        btn.disabled = false
+      }
+    }
+  }, 1000)
 }
 
 // Auto-poll for QR scan completion

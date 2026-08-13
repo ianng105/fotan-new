@@ -51,9 +51,8 @@ QWEN_API_KEY=sk-your-api-key-here
 npm start
 ```
 
-這會同時啟動：
-- **Wrangler 開發伺服器**（`http://localhost:8787`）— 應用程式本身
-- **PDF Worker**（`http://localhost:3000`）— Puppeteer 收據生成
+這會啟動：
+- **Wrangler 開發伺服器**（`http://localhost:8787`）— 應用程式本身（收據 PDF 由 pdf-lib 在 Worker 內直接生成，無需額外服務）
 
 按 `Ctrl+C` 即可停止所有服務。
 

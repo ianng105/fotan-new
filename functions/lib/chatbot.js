@@ -1,5 +1,9 @@
 // Shared chatbot logic for chat.js and telegram.js
 
+import { PDFDocument, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import { loadChineseFont } from './font-loader.js';
+
 export function getTools() {
   return [
     { type: 'function', function: { name: 'get_meetings', description: '查詢所有會議列表', parameters: { type: 'object', properties: {}, required: [] } } },
@@ -655,7 +659,8 @@ export async function executeFunction(env, name, args) {
           else { dd = String(d).substring(0, 10); }
         }
 
-        const filledHtml = fillReceiptHtml(templateHtml, {
+        // Render receipt PDF in-Worker with pdf-lib (no local Puppeteer)
+        const pdfBytes = await renderReceiptPdf(env, templateHtml, {
           name: name || '',
           dd, mm, yyyy,
           amount: String(amount || ''),
@@ -664,10 +669,7 @@ export async function executeFunction(env, name, args) {
           paymentMethod: payment_method || '',
           chequeNo, bankName
         });
-
-        // Convert filled HTML to PDF via local pdf-worker (Puppeteer)
-        const pdfBytes = await convertHtmlToPdf(filledHtml);
-        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 3000?' });
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF generation failed' });
 
         const r2Key = 'receipts/receipt-' + receipt_no + '.pdf';
         await env.R2.put(r2Key, pdfBytes, {
@@ -749,7 +751,8 @@ export async function executeFunction(env, name, args) {
           else { dd = String(d).substring(0, 10); }
         }
 
-        const filledHtml = fillReceiptHtml(templateHtml, {
+        // Render receipt PDF in-Worker with pdf-lib (no local Puppeteer)
+        const pdfBytes = await renderReceiptPdf(env, templateHtml, {
           name: name2 || '',
           dd, mm, yyyy,
           amount: String(amount2 || ''),
@@ -758,10 +761,7 @@ export async function executeFunction(env, name, args) {
           paymentMethod: payment_method || '',
           chequeNo: chequeNo2, bankName: bankName2
         });
-
-        // Convert filled HTML to PDF via local pdf-worker (Puppeteer)
-        const pdfBytes = await convertHtmlToPdf(filledHtml);
-        if (!pdfBytes) return JSON.stringify({ error: 'PDF conversion failed — is pdf-worker running on port 3000?' });
+        if (!pdfBytes) return JSON.stringify({ error: 'PDF generation failed' });
 
         const r2Key = 'receipts/receipt-' + (receipt_no || Date.now()) + '.pdf';
         await env.R2.put(r2Key, pdfBytes, {
@@ -1058,22 +1058,188 @@ async function getHtmlTemplate(env) {
   } catch (e) { console.error('getHtmlTemplate error:', e.message); return null; }
 }
 
-// ── Convert filled HTML to PDF via local pdf-worker ──
-async function convertHtmlToPdf(html) {
-  const PDF_WORKER_URL = 'http://127.0.0.1:3000';
+// ── Render receipt PDF with pdf-lib (in-Worker, no local Puppeteer) ──
+// Replicates fotanclub09.html layout: background PNG (design) + text fields.
+// Field positions come from the template's absolute em coordinates (1em = 12pt).
+
+const RECEIPT_PAGE_W = 595.28;  // A4
+const RECEIPT_PAGE_H = 841.89;
+const RECEIPT_RED = rgb(0.933, 0, 0);
+const RECEIPT_BLACK = rgb(0, 0, 0);
+
+// [x_em, y_em, fontSize_em] — origin top-left, matching the HTML template
+const RECEIPT_FIELDS = {
+  receiptNo:   [38.7633, 5.7074, 0.92, 'red'],
+  computerGen: [39.7783, 7.3728, 0.58],
+  dateLabel:   [4.14, 13.519, 0.92],
+  dd:          [11.1117, 13.519, 0.92],
+  mm:          [17.0942, 13.519, 0.92],
+  yyyy:        [23.5742, 13.519, 0.92],
+  timeLabel:   [34.1058, 13.519, 0.92],
+  hh:          [41.7783, 13.519, 0.92],
+  zz:          [44.3483, 13.519, 0.92],
+  payee:       [4.2, 15.7691, 0.92],
+  amount:      [4.2, 20.6191, 0.92],
+  event:       [4.2, 24.6215, 0.92],
+  cashBox:     [4.962, 27.6969, 0.92],
+  fpsBox:      [17.2142, 27.6969, 0.92],
+  paymeBox:    [30.2258, 27.6869, 0.92],
+  chequeNo:    [4.41, 29.8065, 0.83],
+  bankName:    [23.0042, 29.6215, 0.83],
+  company:     [40.0683, 38.6563, 0.58],
+  authSign:    [4.14, 41.2363, 0.58],
+  enFooter:    [16.3942, 46.1969, 0.58],
+  zhFooter:    [20.0242, 47.0547, 0.58],
+  companyName: [14.7717, 51.3739, 0.67],
+  address:     [18.9442, 52.9813, 0.5],
+};
+
+export async function renderReceiptPdf(env, templateHtml, data) {
   try {
-    const resp = await fetch(PDF_WORKER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html })
+    // 1. Extract the design background PNG from the HTML template
+    const pngMatch = templateHtml.match(/data:image\/png;base64,([^"]+)"/);
+    if (!pngMatch) throw new Error('template background PNG not found');
+
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    const page = doc.addPage([RECEIPT_PAGE_W, RECEIPT_PAGE_H]);
+
+    // White page background
+    page.drawRectangle({
+      x: 0, y: 0, width: RECEIPT_PAGE_W, height: RECEIPT_PAGE_H,
+      color: rgb(1, 1, 1),
     });
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      throw new Error(err.error || 'PDF worker returned ' + resp.status);
+
+    // Design background (transparent PNG with lines/logo)
+    const bgImage = await doc.embedPng(Uint8Array.from(atob(pngMatch[1]), c => c.charCodeAt(0)));
+    page.drawImage(bgImage, { x: 0, y: 0, width: RECEIPT_PAGE_W, height: RECEIPT_PAGE_H });
+
+    // Logo image (JPEG, absolutely positioned in the HTML template).
+    // Template: style="position:absolute; width:90px; height:50px; left:70px; top:90px"
+    // HTML px → PDF pt: 1px = 0.75pt (template page 793×1121px ↔ A4 page)
+    const logoTag = templateHtml.match(/<img\b[^>]*src="data:image\/jpe?g;base64,([^"]+)"[^>]*>/);
+    if (logoTag) {
+      try {
+        const styleAttr = (logoTag[0].match(/style="([^"]+)"/) || [])[1] || '';
+        const px = (prop) => parseFloat((styleAttr.match(new RegExp(prop + ':\\s*([\\d.]+)px')) || [])[1] || '0');
+        const logo = await doc.embedJpg(Uint8Array.from(atob(logoTag[1]), c => c.charCodeAt(0)));
+        page.drawImage(logo, {
+          x: px('left') * 0.75,
+          y: RECEIPT_PAGE_H - (px('top') + px('height')) * 0.75,
+          width: px('width') * 0.75,
+          height: px('height') * 0.75,
+        });
+      } catch (e) {
+        console.error('[receipt] logo image embed failed:', e.message);
+      }
     }
-    return new Uint8Array(await resp.arrayBuffer());
+
+    // 2. Load Chinese font
+    let font;
+    try {
+      const fontData = await loadChineseFont(env);
+      font = await doc.embedFont(fontData);
+    } catch (e) {
+      throw new Error('Chinese font unavailable: ' + e.message);
+    }
+
+    // 3. Field values (parity with fillReceiptHtml)
+    const now = new Date();
+    const yyyyVal = data.yyyy || String(now.getFullYear());
+    const hhVal = String(data.timeHH || String(now.getHours()).padStart(2, '0'));
+    const zzVal = String(data.timeMM || String(now.getMinutes()).padStart(2, '0'));
+    const amountStr = data.amount
+      ? '港幣$' + String(data.amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+      : 'A mountOfMoney';
+    const pm = String(data.paymentMethod || '').toLowerCase();
+
+    const drawField = (key, text, xOffset = 0) => {
+      const [xEm, yEm, sizeEm, color] = RECEIPT_FIELDS[key];
+      const size = sizeEm * 12;
+      page.drawText(text, {
+        x: xEm * 12 + xOffset,
+        y: RECEIPT_PAGE_H - yEm * 12 - size * 0.85,
+        size,
+        font,
+        color: color === 'red' ? RECEIPT_RED : RECEIPT_BLACK,
+      });
+    };
+
+    // Manual checkbox (the font has no ☑/☐ glyphs)
+    const drawCheckbox = (key, checked) => {
+      const [xEm, yEm] = RECEIPT_FIELDS[key];
+      const box = 8;
+      const x = xEm * 12;
+      const y = RECEIPT_PAGE_H - yEm * 12 - box;
+      if (checked) {
+        page.drawRectangle({ x, y, width: box, height: box, color: RECEIPT_BLACK });
+        // white check mark: two short lines
+        page.drawLine({
+          start: { x: x + 1.8, y: y + box * 0.52 },
+          end: { x: x + box * 0.42, y: y + box * 0.2 },
+          thickness: 1.1, color: rgb(1, 1, 1),
+        });
+        page.drawLine({
+          start: { x: x + box * 0.42, y: y + box * 0.2 },
+          end: { x: x + box - 1.4, y: y + box * 0.75 },
+          thickness: 1.1, color: rgb(1, 1, 1),
+        });
+      } else {
+        page.drawRectangle({
+          x, y, width: box, height: box,
+          borderWidth: 0.8, borderColor: RECEIPT_BLACK, color: rgb(1, 1, 1),
+        });
+      }
+    };
+
+    // Receipt number — replace the template's "AA" year placeholder with the
+    // last two digits of the current year (e.g. 2026 → "No:26-0000151")
+    const yy = String(now.getFullYear()).slice(-2);
+    const noSpan = templateHtml.match(/<span class="pdf24_07[^"]*"[^>]*>([^<]+)</);
+    const receiptNoText = noSpan
+      ? noSpan[1].replace(/&nbsp;/g, ' ').trim()
+          .replace('AA', yy)
+          .replace('0000101', String(data.receiptNo || '0000101'))
+      : 'No:' + (data.receiptNo || '0000101');
+    drawField('receiptNo', receiptNoText);
+    drawField('computerGen', 'Computer Generated Receipt');
+    drawField('dateLabel', 'Date/日期:');
+    drawField('dd', (data.dd || 'dd') + ' 日');
+    drawField('mm', (data.mm || 'mm') + ' 月');
+    drawField('yyyy', yyyyVal + ' 年');
+    drawField('timeLabel', 'Time/時間:');
+    drawField('hh', hhVal + ' ');
+    drawField('zz', zzVal + ' ');
+    drawField('payee', 'Received from / 茲收到: ' + (data.name || 'Payee'));
+    drawField('amount', 'Amount / 金額: ' + amountStr);
+    drawField('event', 'Being in payment / 繳付:' + (data.event || 'EventName'));
+
+    // Payment method checkboxes (manual squares — font lacks ☑/☐)
+    // Label text starts ~10pt after the box
+    drawCheckbox('cashBox', pm === 'cash');
+    drawField('cashBox', '現金/Cash', 10);
+    drawCheckbox('fpsBox', pm === 'fps');
+    drawField('fpsBox', '轉數快/FPS', 10);
+    drawCheckbox('paymeBox', pm === 'payme');
+    drawField('paymeBox', ' PayMe', 10);
+
+    // Cheque row (only when paying by cheque)
+    if (pm === 'cheque') {
+      drawField('chequeNo', '支票號碼/Cheque NO.: ' + (data.chequeNo || ''));
+      drawField('bankName', '付款銀行/Bank: ' + (data.bankName || ''));
+    }
+
+    drawField('company', 'Company');
+    drawField('authSign', '授權簽署/Authorised Signature:');
+    drawField('enFooter', 'This is a computer-generated receipt. No signature is required.');
+    drawField('zhFooter', '此為電腦編輯收據, 毋需簽署');
+    drawField('companyName', '火炭商務協會有限公司 FOTAN BUSINESS ASSOCIATION LIMITED');
+    drawField('address', '地址: 沙田火炭穗禾路 1 號豐利工業中心地下 3B 鋪');
+
+    const pdfBytes = await doc.save();
+    return pdfBytes;
   } catch (e) {
-    console.error('convertHtmlToPdf error:', e.message);
+    console.error('renderReceiptPdf error:', e.message);
     return null;
   }
 }
@@ -1100,77 +1266,6 @@ function parseDate(text) {
   m = s.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
   if (m) return m[3] + '-' + String(parseInt(m[2])).padStart(2,'0') + '-' + String(parseInt(m[1])).padStart(2,'0');
   return null;
-}
-
-// ── Fill HTML receipt template with data ──
-function fillReceiptHtml(templateHtml, data) {
-  let html = templateHtml;
-
-  // Payee name — replace "茲收到: Payee" with "茲收到: <name>"
-  if (data.name) {
-    html = html.replace('茲收到: Payee', '茲收到: ' + data.name);
-  }
-
-  // Date: dd, mm, yyyy — targeted by span class to avoid false matches
-  // dd is inside <span class="pdf24_12 pdf24_08 pdf24_17" ...>dd </span>
-  if (data.dd) html = html.replace('class="pdf24_12 pdf24_08 pdf24_17" style="word-spacing:0.5384em;">dd ', 'class="pdf24_12 pdf24_08 pdf24_17" style="word-spacing:0.5384em;">' + data.dd + ' ');
-  // mm is inside <span class="pdf24_12 pdf24_08 pdf24_16" ...>mm </span>
-  if (data.mm) html = html.replace('class="pdf24_12 pdf24_08 pdf24_16" style="word-spacing:0.5402em;">mm ', 'class="pdf24_12 pdf24_08 pdf24_16" style="word-spacing:0.5402em;">' + data.mm + ' ');
-  // yyyy is inside <span class="pdf24_12 pdf24_08 pdf24_18" ...>yyyy </span>
-  // Always fill yyyy: use provided year or current year
-  const yyyyVal = data.yyyy || String(new Date().getFullYear());
-  html = html.replace('class="pdf24_12 pdf24_08 pdf24_18" style="word-spacing:0.3169em;">yyyy ', 'class="pdf24_12 pdf24_08 pdf24_18" style="word-spacing:0.3169em;">' + yyyyVal + ' ');
-
-  // Time
-  const now = new Date();
-  const hh = data.timeHH || String(now.getHours()).padStart(2, '0');
-  const mmTime = data.timeMM || String(now.getMinutes()).padStart(2, '0');
-  html = html.replace('>XX ', '>' + hh + ' ');
-  html = html.replace('>ZZ ', '>' + mmTime + ' ');
-
-  // Amount — remove "A" prefix and replace mountOfMoney with 港幣$ amount
-  if (data.amount) {
-    const amtStr = '港幣$' + String(data.amount).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    // Remove the "A" prefix span before mountOfMoney
-    html = html.replace('class="pdf24_23 pdf24_24 pdf24_25">A</span><span class="pdf24_14 pdf24_15 pdf24_11">mountOfMoney', 'class="pdf24_23 pdf24_24 pdf24_25"></span><span class="pdf24_14 pdf24_15 pdf24_11">' + amtStr);
-  }
-
-  // Event
-  if (data.event) html = html.replace('EventName', data.event);
-
-  // Receipt number
-  // Receipt number — replace 0000101 in <span class="pdf24_07 pdf24_08 pdf24_09">
-  if (data.receiptNo) html = html.replace('class="pdf24_07 pdf24_08 pdf24_09">No:0000101', 'class="pdf24_07 pdf24_08 pdf24_09">No:' + data.receiptNo);
-
-  // Payment method checkbox — replace ☐ with ☑ in <span class="pdf24_30 pdf24_15 pdf24_27">
-  if (data.paymentMethod) {
-    const pm = data.paymentMethod.toLowerCase();
-    if (pm === 'cash') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27">☐</span><span class="pdf24_14 pdf24_15 pdf24_27">現金', 'class="pdf24_30 pdf24_15 pdf24_27">☑</span><span class="pdf24_14 pdf24_15 pdf24_27">現金');
-    else if (pm === 'fps') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27">☐</span><span class="pdf24_14 pdf24_15 pdf24_27">轉數快', 'class="pdf24_30 pdf24_15 pdf24_27">☑</span><span class="pdf24_14 pdf24_15 pdf24_27">轉數快');
-    else if (pm === 'payme') html = html.replace('class="pdf24_30 pdf24_15 pdf24_27" style="word-spacing:0.3478em;">☐ </span><span class="pdf24_23 pdf24_24 pdf24_25">PayMe', 'class="pdf24_30 pdf24_15 pdf24_27" style="word-spacing:0.3478em;">☑ </span><span class="pdf24_23 pdf24_24 pdf24_25">PayMe');
-    else if (pm === 'cheque') html = html.replace('/Cheque NO.:', '/Cheque NO.: X');
-  }
-
-  // Cheque details — only fill when payment method is cheque, else remove placeholders
-  const isCheque = data.paymentMethod && data.paymentMethod.toLowerCase() === 'cheque';
-  if (isCheque) {
-    if (data.chequeNo) {
-      html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo', 'class="pdf24_33 pdf24_24 pdf24_34">' + data.chequeNo);
-    } else {
-      html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo &nbsp;', 'class="pdf24_33 pdf24_24 pdf24_34">');
-    }
-    if (data.bankName) {
-      html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName', 'class="pdf24_12 pdf24_08 pdf24_36">' + data.bankName);
-    } else {
-      html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName &nbsp;', 'class="pdf24_12 pdf24_08 pdf24_36">');
-    }
-  } else {
-    // Not paying by cheque — strip both cheque rows
-    html = html.replace('class="pdf24_33 pdf24_24 pdf24_34">cNo &nbsp;', 'class="pdf24_33 pdf24_24 pdf24_34">');
-    html = html.replace('class="pdf24_12 pdf24_08 pdf24_36">BName &nbsp;', 'class="pdf24_12 pdf24_08 pdf24_36">');
-  }
-
-  return html;
 }
 
 export async function callQwen(env, messages, apiKey) {

@@ -11,3 +11,6 @@ database_id = "96baaebb-c825-4dcc-8229-e55abab0d474"
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "fotan-bucket"
+
+[vars]
+QWEN_API_KEY = "sk-4f18464b906c4d5abe53b1d4dce6f18e"

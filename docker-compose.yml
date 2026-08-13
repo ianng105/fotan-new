@@ -1,0 +1,42 @@
+# ── WuzAPI + Cloudflare Tunnel ──────────────────────────────────────────
+#
+# Prerequisites:
+#   1. Copy wuzapi.env.example → wuzapi.env and edit secrets
+#   2. docker compose up --build -d
+#
+# After starting, get the tunnel URL from logs:
+#   docker compose logs -f
+#
+# Then deploy the Worker:
+#   cd wuzapi
+#   npx wrangler secret put WUZAPI_URL   # paste the tunnel URL
+#   npm run deploy
+
+services:
+  wuzapi:
+    build: .
+    container_name: whatsapp-wuzapi
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # wuzapi API
+      - "3100:3100"   # relay webhook receiver
+    env_file:
+      - wuzapi.env
+    volumes:
+      # Persist WhatsApp session data so you don't need to re-scan QR
+      - wuzapi_sessions:/app/sessions
+      # Persist wuzapi user database (WhatsApp credentials)
+      - wuzapi_dbdata:/app/dbdata
+      # Persist cloudflared tunnel log
+      - wuzapi_logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  wuzapi_sessions:
+  wuzapi_dbdata:
+  wuzapi_logs:

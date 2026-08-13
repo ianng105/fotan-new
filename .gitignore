@@ -3,3 +3,9 @@ node_modules/
 .DS_Store
 *.log
 .dev.vars
+
+# Local secrets and state (not for git)
+wuzapi.env
+wuzapi/.env
+dbdata/
+wuzapi.exe

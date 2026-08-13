@@ -36,7 +36,10 @@ class PinoShim {
   }
 }
 
-const logger = new PinoShim();
+// Baileys calls `pino({level: 'info'})` — export a factory function
+function pinoFactory(_opts?: Record<string, unknown>): PinoShim {
+  return new PinoShim();
+}
 
-export default logger;
-export { PinoShim };
+export default pinoFactory;
+export { PinoShim, pinoFactory as pino };

@@ -25,14 +25,25 @@ interface DOAuthState {
   saveCreds: () => Promise<void>;
 }
 
+// Safe wrapper: .one() throws if no rows, so catch and return undefined
+function safeOne<T = Record<string, unknown>>(
+  cursor: ReturnType<SqlStorage["exec"]>
+): T | undefined {
+  try {
+    return cursor.one() as T | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function makeDOAuthState(sql: SqlStorage): DOAuthState {
   let _creds: AuthenticationCreds | null = null;
 
   async function loadCreds(): Promise<AuthenticationCreds> {
     if (_creds) return _creds;
-    const row = sql
-      .exec("SELECT value FROM auth_creds WHERE key = 'main'")
-      .one() as { value: string } | undefined;
+    const row = safeOne<{ value: string }>(
+      sql.exec("SELECT value FROM auth_creds WHERE key = 'main'")
+    );
     _creds = row
       ? (JSON.parse(row.value) as AuthenticationCreds)
       : ({} as AuthenticationCreds);
@@ -63,9 +74,9 @@ function makeDOAuthState(sql: SqlStorage): DOAuthState {
         const result: Record<string, SignalDataTypeMap[T]> = {};
         for (const id of ids) {
           const key = `${type}|${id}`;
-          const row = sql
-            .exec("SELECT value FROM auth_keys WHERE key = ?", key)
-            .one() as { value: string } | undefined;
+          const row = safeOne<{ value: string }>(
+            sql.exec("SELECT value FROM auth_keys WHERE key = ?", key)
+          );
           if (row) {
             try {
               result[id] = JSON.parse(row.value) as SignalDataTypeMap[T];
@@ -124,14 +135,14 @@ export class WhatsAppDO extends DurableObject {
         `CREATE TABLE IF NOT EXISTS do_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`
       );
 
-      const row = s
-        .exec("SELECT value FROM do_state WHERE key = 'botName'")
-        .one() as { value: string } | undefined;
+      const row = safeOne<{ value: string }>(
+        s.exec("SELECT value FROM do_state WHERE key = 'botName'")
+      );
       if (row) this.botName = row.value;
 
-      const wasConnected = s
-        .exec("SELECT value FROM do_state WHERE key = 'connectionState'")
-        .one() as { value: string } | undefined;
+      const wasConnected = safeOne<{ value: string }>(
+        s.exec("SELECT value FROM do_state WHERE key = 'connectionState'")
+      );
       if (wasConnected && wasConnected.value === "open") {
         this.ctx.waitUntil?.(this.reconnect());
       }

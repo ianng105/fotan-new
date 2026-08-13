@@ -3,13 +3,17 @@
 
 let cachedFont = null;
 
-// Try to load from local static asset first, then CDN sources
+// Try to load from local static asset first, then CDN sources.
+// NOTE: Must be TTF/OTF for pdf-lib embedding — WOFF2 is embedded raw
+// by pdf-lib and PDF viewers cannot parse it (broken glyphs).
 function getUrls(env) {
   const urls = [];
   // In local Miniflare dev, try absolute URL first (relative fetch fails in Workers)
-  try { urls.push('http://127.0.0.1:8787/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
-  try { urls.push('http://127.0.0.1:8788/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
+  try { urls.push('http://127.0.0.1:8787/assets/NotoSansTC-Regular.ttf'); } catch(e) {}
+  try { urls.push('http://127.0.0.1:8788/assets/NotoSansTC-Regular.ttf'); } catch(e) {}
   // Production — use relative path (works with Pages asset serving)
+  try { urls.push('/assets/NotoSansTC-Regular.ttf'); } catch(e) {}
+  try { urls.push('http://127.0.0.1:8787/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
   try { urls.push('/assets/NotoSansTC-Regular.woff2'); } catch(e) {}
   urls.push(
     'https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-tc@latest/chinese-traditional-400-normal.woff2',
@@ -34,6 +38,14 @@ export async function loadChineseFont(env) {
         const buf = await resp.arrayBuffer();
         if (buf.byteLength < 5000) {
           console.warn('[font-loader] Font too small (' + buf.byteLength + ' bytes), not valid');
+          continue;
+        }
+        // Reject WOFF/WOFF2 — pdf-lib embeds them raw and PDF viewers
+        // cannot parse the resulting font stream (broken glyphs).
+        const head = new Uint8Array(buf, 0, 4);
+        const isWoff = head[0] === 0x77 && head[1] === 0x4f && head[2] === 0x46; // wOF
+        if (isWoff) {
+          console.warn('[font-loader] Skipping WOFF font (unsupported for pdf-lib embedding): ' + url);
           continue;
         }
         cachedFont = buf;
