@@ -1305,15 +1305,22 @@ function showMeetingForm(editId) {
       meetingId = result.id;
     }
     if (addMembers && meetingId) {
-      // Copy member attendance from the last meeting
-      var lastMtg = meetings.length > 0 ? meetings[0] : null;
-      if (lastMtg) {
-        var lastAtt = await api('/attendance?meeting_id=' + lastMtg.id);
+      // Copy member attendance from the last meeting that actually has attendance.
+      // meetings[0] may be a future-dated meeting with zero attendance, so pick the
+      // most recent meeting on/before today with attendees instead.
+      const allMtg = await api('/meetings'); // sorted date DESC, id DESC
+      const todayStr = new Date().toISOString().split('T')[0];
+      const pastMtg = allMtg.filter(m => m.date && m.date <= todayStr);
+      const srcPool = pastMtg.length ? pastMtg : allMtg;
+      const srcMtg = srcPool.find(m => ((m.stats && m.stats.total) || 0) > 0)
+                  || srcPool.find(m => m.id !== meetingId);
+      if (srcMtg) {
+        var lastAtt = await api('/attendance?meeting_id=' + srcMtg.id);
         var memberIds = [...new Set(lastAtt.filter(a => a.person_type === 'member').map(a => a.person_id))];
         for (var mid2 of memberIds) {
           await api('/attendance', { method: 'POST', body: JSON.stringify({ meeting_id: meetingId, person_type: 'member', person_id: mid2 }) });
         }
-        toast('會議已建立，已複製 ' + memberIds.length + ' 位上次與會會員');
+        toast('會議已建立，已複製 ' + memberIds.length + ' 位上次與會會員（' + srcMtg.date + '）');
         hideModal();
         switchPage('meetings');
         return;

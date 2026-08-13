@@ -271,8 +271,7 @@ function allPeople(){
   var all=[];
   members.forEach(function(p){if(map['member_'+p.id])all.push({p:p,type:'member',label:'會員',att:map['member_'+p.id]})});
   guests.forEach(function(p){if(map['guest_'+p.id])all.push({p:p,type:'guest',label:'來賓',att:map['guest_'+p.id]})});
-  // Show all people with a table assignment in this meeting
-  // Show all people (not just those with table assignments)
+  // Only show people who have been marked for this meeting (have an attendance row)
   all.sort(function(a,b){return (a.p.name||'').localeCompare(b.p.name||'')});
   return all;
 }
@@ -464,7 +463,7 @@ function showJoinForm(){
     '<label style="display:block;font-size:12px;color:#64748b">介紹人</label><input id="jf-inviter" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;margin-bottom:4px" placeholder="誰介紹你來？">'+
     '<div id="jf-msg" style="font-size:12px;text-align:center;margin:8px 0;display:none"></div>'+
     '<button class="btn-yes" style="width:100%;padding:12px;border-radius:10px;border:none;font-size:15px;font-weight:700;cursor:pointer" onclick="submitJoinForm()">提交申請</button>'+
-    '<button class="btn-no" style="width:100%;padding:10px;margin-top:6px;border-radius:8px;border:none;font-size:13px;cursor:pointer" onclick="this.closest('.overlay').remove()">取消</button></div>';
+    '<button class="btn-no" style="width:100%;padding:10px;margin-top:6px;border-radius:8px;border:none;font-size:13px;cursor:pointer" onclick="this.closest(\'.overlay\').remove()">取消</button></div>';
   ov.addEventListener('click',function(e){if(e.target===ov)ov.remove()});
   document.body.appendChild(ov);
 }
