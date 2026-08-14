@@ -2971,7 +2971,7 @@ async function loadWaCerts() {
       <td style="font-size:12px">${esc(r.from_number||'—')}</td>
       <td style="font-weight:${r.person_name?'600':'400'};color:${r.person_name?'var(--text)':'var(--text3)'}">${esc(r.person_name||'未關聯')}</td>
       <td style="max-width:160px;white-space:pre-wrap;word-break:break-word;cursor:pointer" onclick="editCertComment(${r.id},'${esc(r.comment||'')}')" title="點擊修改備註">${esc(r.comment||'—')}</td>
-      <td style="font-size:11px">${esc((r.created_at||'').substring(0,16))}</td>
+      <td style="font-size:11px">${esc((r.created_at||'').substring(0,16))}${r.meeting_id ? '<br><span style="font-size:10px;color:#0d9488">會議#'+r.meeting_id+'</span>' : ''}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm" style="background:#0d9488;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="sendCertReceiptToChatbot('${esc(r.r2_key||'')}','${esc(r.person_name||'')}','${esc(r.note||'')}','${esc(r.comment||'')}','${esc(r.from_number||'')}','${esc((r.created_at||'').substring(0,10))}',${r.meeting_id||0})">🧾 出收據</button>
         <button class="btn btn-sm" style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;margin-right:4px" onclick="window.open('/api/receipt-pdf?cert_id=${r.id}','_blank')">PDF版</button>
@@ -3121,10 +3121,13 @@ function renderLinkCertList(people) {
 
 async function linkCertToPerson(certId, personType, personId, personName) {
   try {
+    const mid = document.getElementById('wacert-meeting-filter')?.value || '';
+    const body = { id: certId, person_type: personType, person_id: personId, person_name: personName };
+    if (mid) body.meeting_id = parseInt(mid, 10);
     const resp = await fetch('/api/whatsapp-cert', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: certId, person_type: personType, person_id: personId, person_name: personName })
+      body: JSON.stringify(body)
     }).then(r => r.json());
     if (resp.ok) {
       toast('✅ 已關聯到 ' + personName);

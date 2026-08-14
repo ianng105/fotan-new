@@ -61,19 +61,17 @@ export async function onRequest(context) {
         return Response.json({ meeting: lastMeeting, people: missing }, { headers: cors });
       }
 
-      const rows = await env.DB.prepare('SELECT * FROM whatsapp_cert ORDER BY created_at DESC').all();
+      const mid = url.searchParams.get('meeting_id');
+      let rows;
+      if (mid) {
+        rows = await env.DB.prepare('SELECT * FROM whatsapp_cert WHERE meeting_id=? ORDER BY created_at DESC').bind(mid).all();
+      } else {
+        rows = await env.DB.prepare('SELECT * FROM whatsapp_cert ORDER BY created_at DESC').all();
+      }
       return Response.json(rows.results, { headers: cors });
     }
 
     // DELETE — cannot delete linked certs
-    if (request.method === 'PUT') {
-      const body = await request.json();
-      const { id, amount, note } = body;
-      if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: cors });
-      if (amount !== undefined) await env.DB.prepare('UPDATE whatsapp_cert SET amount=? WHERE id=?').bind(amount, id).run();
-      if (note !== undefined) await env.DB.prepare('UPDATE whatsapp_cert SET note=? WHERE id=?').bind(note, id).run();
-      return Response.json({ ok: true }, { headers: cors });
-    }
     if (request.method === 'DELETE') {
       const id = url.searchParams.get('id');
       if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: cors });
@@ -91,7 +89,7 @@ export async function onRequest(context) {
     // PUT — link / unlink / update comment
     if (request.method === 'PUT') {
       const body = await request.json();
-      const { id, person_type, person_id, person_name, comment, note } = body;
+      const { id, person_type, person_id, person_name, comment, note, amount, meeting_id } = body;
       if (!id) return Response.json({ error: 'id required' }, { status: 400, headers: cors });
 
       const sets = [];
@@ -101,6 +99,8 @@ export async function onRequest(context) {
       if (person_name !== undefined) { sets.push('person_name=?'); vals.push(person_name || ''); }
       if (comment !== undefined) { sets.push('comment=?'); vals.push(comment); }
       if (note !== undefined) { sets.push('note=?'); vals.push(note); }
+      if (amount !== undefined) { sets.push('amount=?'); vals.push(amount); }
+      if (meeting_id !== undefined) { sets.push('meeting_id=?'); vals.push(meeting_id || 0); }
 
       if (sets.length) {
         vals.push(id);
