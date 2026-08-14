@@ -45,7 +45,20 @@ export async function onRequest(context) {
     const dateStr = cert.created_at
       ? new Date(cert.created_at.replace(' ', 'T') + 'Z').toLocaleString('zh-HK', { timeZone: 'Asia/Hong_Kong' })
       : '—';
-    const certIdStr = String(cert.id).padStart(6, '0');
+    // Get or assign receipt number from counter
+    let receiptNum = cert.receipt_number ? String(cert.receipt_number) : null;
+    if (!receiptNum) {
+      const counterRow = await env.DB.prepare("SELECT value FROM settings WHERE key='receipt_counter'").first();
+      let counter = parseInt(counterRow?.value || '101', 10);
+      receiptNum = '#' + new Date().getFullYear().toString().slice(2) + '-' + String(counter).padStart(6, '0');
+      // Save assigned number to cert and increment counter
+      await env.DB.prepare("UPDATE whatsapp_cert SET receipt_number=? WHERE id=?").bind(receiptNum, certId).run();
+      counter++;
+      await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('receipt_counter', ?)").bind(String(counter)).run();
+    }
+    // Format: #26-000031
+    const yearPrefix = new Date().getFullYear().toString().slice(2);
+    const certIdStr = receiptNum || ('#' + yearPrefix + '-' + String(cert.id).padStart(6, '0'));
 
     // ── Load template PDF ──
     const templateBuf = loadReceiptTemplate();
@@ -96,8 +109,15 @@ export async function onRequest(context) {
 
     // --- Right column: Payment info ---
     // Template sample: payment date, "FPS"
-    field(page, dateStr,                  335, 613, 210, 22, font, 14, DARK);
-    field(page, 'FPS / 轉數快',           335, 588, 210, 18, font, 10, DARK);
+    // Committee 6-month payment: show custom amount
+    const displayAmount = cert.amount > 0 ? cert.amount : 398;
+    const amountStr = 'HK$ ' + displayAmount.toLocaleString();
+    field(page, dateStr,                  335, 644, 210, 22, font, 14, DARK);
+    field(page, amountStr,                335, 613, 210, 28, font, 18, DARK);
+    const paymentDesc = cert.amount >= 1000
+      ? '委員 6 個月會費 (' + cert.note + ')'
+      : 'FPS / 轉數快';
+    field(page, paymentDesc,              335, 588, 210, 18, font, 10, DARK);
 
     // --- Remarks ---
     if (cert.note) {
